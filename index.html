@@ -38,6 +38,15 @@ table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:8px;bord
   <div class="muted">Prototipo · Inventario Oakland 16072026</div>
 </header>
 
+
+<div class="card">
+  <h3 style="margin-top:0">Diagnóstico de serie</h3>
+  <div class="row">
+    <input id="manualSerial" placeholder="Escribe una serie, por ejemplo 1581FA6QC265V01CCB75" style="flex:1;min-width:220px">
+    <button id="manualSearch">Buscar en inventario</button>
+  </div>
+  <div id="manualResult" class="small" style="margin-top:10px"></div>
+</div>
 <div class="card">
   <div class="row">
     <label class="file secondary">📄 Cargar Excel<input id="file" type="file" accept=".xlsx,.xls"></label>
@@ -69,7 +78,7 @@ table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:8px;bord
     <button id="export" class="secondary">⬇️ Exportar resultado</button>
   </div>
   <div id="reader"><div id="scanHint">La cámara aparecerá aquí.</div></div>
-  <div class="small" style="margin-top:8px">Apunta al código de barras del número de serie. El lector admite varios formatos, pero solo acepta una lectura si coincide exactamente con una serie del inventario.</div>
+  <div class="small" style="margin-top:8px">Consejo: apunta al código de barras del número de serie. El sistema solo acepta códigos que coincidan exactamente con una serie del inventario y descarta EAN/UPC y otros códigos.</div>
 </div>
 
 <div class="card">
@@ -100,10 +109,7 @@ let scanTimer = null;
 
 const $ = id => document.getElementById(id);
 function norm(s) {
-  return String(s ?? "")
-    .normalize("NFKC")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
+  return String(s ?? "").trim().toUpperCase().replace(/\s+/g,"");
 }
 function toast(msg) {
   $("toast").textContent = msg;
@@ -148,14 +154,7 @@ function processCode(raw) {
 
   // The loaded NoSerie column is the authoritative whitelist.
   const hit = inventory.find(x => norm(x.serial) === code);
-  if(!hit) {
-    const nowReject = Date.now();
-    if (nowReject - (window.__lastRejectTime || 0) > 900) {
-      window.__lastRejectTime = nowReject;
-      toast("Código leído, pero no corresponde a una serie del inventario");
-    }
-    return;
-  }
+  if(!hit) return; // Ignore EAN/UPC and every other barcode.
 
   const now = Date.now();
   if(code === visibleCode && now - visibleCodeLastSeen < 1800) {
@@ -235,6 +234,27 @@ function stopScan() {
   $("stop").disabled = true;
   $("scanHint").textContent = "La cámara está detenida.";
 }
+
+
+function manualSearch() {
+  const raw = $("manualSerial").value;
+  const code = norm(raw);
+  const hit = inventory.find(x => norm(x.serial) === code);
+  if(hit) {
+    $("manualResult").innerHTML =
+      `<span class="badge">✓ ENCONTRADA</span> <b>${hit.serial}</b><br>` +
+      `${hit.item || ""} · ${hit.code || ""}`;
+  } else {
+    $("manualResult").innerHTML =
+      `<span class="badge" style="background:#fee2e2;color:#991b1b">NO ENCONTRADA</span> ` +
+      `La clave normalizada es: <b>${code}</b>`;
+  }
+}
+$("manualSearch").addEventListener("click", manualSearch);
+$("manualSerial").addEventListener("keydown", e => {
+  if(e.key === "Enter") manualSearch();
+});
+
 
 function resetAll() {
   found.clear(); recent=[]; lastCode=""; lastTime=0; visibleCode=""; visibleCodeLastSeen=0;
