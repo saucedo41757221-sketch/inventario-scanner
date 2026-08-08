@@ -193,12 +193,18 @@ async function startScan() {
   if(!inventory.length) { toast("Primero carga un inventario"); return; }
   if(!window.Html5Qrcode) { toast("No se cargó el lector. Recarga la página."); return; }
 
+  // If the previous camera session is still shutting down, wait for it.
+  if(stoppingScanner) {
+    try { await stoppingScanner; } catch(e) {}
+  }
+  if(qrScanner) return;
+
   try {
     qrScanner = new Html5Qrcode("reader");
     scanning = true;
     $("start").disabled = true;
     $("stop").disabled = false;
-    $("scanHint").textContent = "Apunta al código de barras del S/N";
+    $("scanHint").textContent = "Apunta al código de barras del número de serie.";
 
     await qrScanner.start(
       { facingMode: "environment" },
@@ -223,21 +229,39 @@ async function startScan() {
   } catch(e) {
     console.error(e);
     toast("No se pudo abrir la cámara. Revisa el permiso del navegador.");
-    stopScan();
+    await stopScan();
   }
 }
 
-function stopScan() {
+async function stopScan() {
   scanning = false;
+  $("start").disabled = true;
+  $("stop").disabled = true;
+  $("scanHint").textContent = "Cerrando cámara...";
+
   if(qrScanner) {
-    qrScanner.stop().catch(()=>{}).finally(()=>{
-      try { qrScanner.clear(); } catch(e) {}
-      qrScanner = null;
-    });
+    const scanner = qrScanner;
+    qrScanner = null;
+
+    stoppingScanner = (async () => {
+      try {
+        await scanner.stop();
+      } catch(e) {
+        console.warn("stop:", e);
+      }
+      try {
+        scanner.clear();
+      } catch(e) {
+        console.warn("clear:", e);
+      }
+    })();
+
+    try { await stoppingScanner; } finally { stoppingScanner = null; }
   }
+
   $("start").disabled = false;
   $("stop").disabled = true;
-  $("scanHint").textContent = "La cámara está detenida.";
+  $("scanHint").textContent = "La cámara está detenida. Puedes iniciarla nuevamente.";
 }
 
 function resetAll() {
