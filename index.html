@@ -238,7 +238,7 @@ async function startScan() {
       { facingMode: "environment" },
       {
         fps: 12,
-        qrbox: { width: 300, height: 140 },
+        qrbox: { width: 520, height: 300 },
         aspectRatio: 1.777778,
         formatsToSupport: [
           Html5QrcodeSupportedFormats.CODE_128,
@@ -381,86 +381,112 @@ async function ensureOcrWorker() {
 }
 
 async function runOCR() {
-  if(ocrBusy) return;
-  if(!inventory.length) { toast("Primero carga un inventario"); return; }
+  const box = $("camera");
+  if(!box) return;
 
-  const video = getCameraVideo();
-  if(!video || !video.videoWidth) {
-    toast("Inicia la cámara antes de buscar texto");
+  const video = box.querySelector("video");
+  if(!video || !video.videoWidth || !video.videoHeight) {
+    toast("La cámara no está disponible");
     return;
   }
 
-  ocrBusy = true;
-  $("ocr").disabled = true;
-  $("ocrStatus").textContent = "Analizando texto de la imagen…";
+  $("cameraRead").innerHTML =
+    `<div class="small">OCR</div><b>Analizando imagen...</b>`;
 
-  try {
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d", {willReadFrequently:true});
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  // Capture the full camera image instead of the previous narrow crop.
+  const canvas = document.createElement("canvas");
+  const scale = 2;
+  canvas.width = video.videoWidth * scale;
+  canvas.height = video.videoHeight * scale;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // OCR is a fallback. Analyze the central scanning area first, where the label is expected.
-    const cropW = Math.floor(canvas.width * 0.92);
-    const cropH = Math.floor(canvas.height * 0.58);
-    const sx = Math.floor((canvas.width - cropW) / 2);
-    const sy = Math.floor((canvas.height - cropH) / 2);
-    const crop = document.createElement("canvas");
-    crop.width = cropW;
-    crop.height = cropH;
-    crop.getContext("2d").drawImage(canvas, sx, sy, cropW, cropH, 0, 0, cropW, cropH);
+  const variants = [];
 
-    const worker = await ensureOcrWorker();
-    const result = await worker.recognize(crop);
-    const ocrText = result.data.text || "";
-    const parsed = ocrCandidates(ocrText);
+  // Original.
+  variants.push(canvas);
 
-    $("cameraRead").innerHTML =
-      `<div class="small">OCR — TEXTO DETECTADO</div>
-       <div style="font-size:16px;font-weight:700;white-space:pre-wrap;word-break:break-word">${ocrText.replaceAll("<","&lt;").replaceAll(">","&gt;") || "(sin texto)"}</div>`;
-
-    // Strongest case: a complete inventory serial appears in the OCR text.
-    if(parsed.inventoryHits.length === 1) {
-      processCode(parsed.inventoryHits[0].serial);
-      $("ocrStatus").textContent = "✓ El OCR identificó una única serie del inventario.";
-      return;
-    }
-    if(parsed.inventoryHits.length > 1) {
-      $("ocrStatus").textContent = "⚠️ El OCR detectó varias series; no se marcó ninguna.";
-      toast("OCR: varias series detectadas");
-      return;
-    }
-
-    // Otherwise try the same exact/partial matcher against OCR tokens.
-    const hits = [];
-    for(const token of parsed.tokens) {
-      const r = findSerialSmart(token);
-      if(r.matches.length === 1) {
-        const hit = r.matches[0];
-        if(!hits.some(x => norm(x.serial) === norm(hit.serial))) hits.push(hit);
-      }
-    }
-
-    if(hits.length === 1) {
-      processCode(hits[0].serial);
-      $("ocrStatus").textContent = `✓ Serie identificada por OCR: ${hits[0].serial}`;
-    } else if(hits.length > 1) {
-      $("ocrStatus").textContent = "⚠️ El OCR produjo varias coincidencias; no se marcó ninguna.";
-      toast("OCR: varias coincidencias");
-    } else {
-      $("ocrStatus").textContent = "No se encontró una serie única en el texto.";
-      toast("OCR: no se encontró una serie");
-    }
-  } catch(e) {
-    console.error(e);
-    $("ocrStatus").textContent = "No se pudo analizar el texto.";
-    toast("Error al ejecutar OCR");
-  } finally {
-    ocrBusy = false;
-    $("ocr").disabled = false;
+  // Grayscale + contrast.
+  const gray = document.createElement("canvas");
+  gray.width = canvas.width;
+  gray.height = canvas.height;
+  const g = gray.getContext("2d");
+  g.drawImage(canvas, 0, 0);
+  const img = g.getImageData(0, 0, gray.width, gray.height);
+  for(let i=0;i<img.data.length;i+=4) {
+    const y = 0.299*img.data[i] + 0.587*img.data[i+1] + 0.114*img.data[i+2];
+    const c = Math.max(0, Math.min(255, (y - 128) * 1.65 + 128));
+    img.data[i] = img.data[i+1] = img.data[i+2] = c;
   }
+  g.putImageData(img, 0, 0);
+  variants.push(gray);
+
+  let combined = "";
+  for(const v of variants) {
+    try {
+      const { data:{ text:ocrText="" } } = await Tesseract.recognize(
+        v,
+        "eng",
+        { logger: m => {} }
+      );
+      combined += "\n" + ocrText;
+    } catch(e) {}
+  }
+
+  const cleaned = combined.replace(/\s+/g, " ").trim();
+
+  // First: exact inventory series appearing anywhere in OCR text.
+  let exactHit = null;
+  for(const row of inventory) {
+    const s = norm(row.serial);
+    if(s && cleaned.toUpperCase().includes(s.toUpperCase())) {
+      exactHit = row;
+      break;
+    }
+  }
+
+  if(exactHit) {
+    $("cameraRead").innerHTML =
+      `<div class="small">OCR DETECTADO</div>
+       <div style="font-size:18px;font-weight:800;word-break:break-all">${cleaned}</div>
+       <div style="margin-top:8px"><span class="badge">✓ OCR — ENCONTRADA</span>
+       <b>${exactHit.serial}</b><br>${exactHit.item || ""}</div>`;
+    processCode(exactHit.serial);
+    return;
+  }
+
+  // Second: tokenize OCR and use the same smart matching algorithm.
+  const tokens = cleaned
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter(x => x.length >= 6);
+
+  let partialHit = null;
+  let partialInfo = null;
+
+  for(const token of tokens) {
+    const r = findSerialSmart(token);
+    if(r.matches.length === 1) {
+      partialHit = r.matches[0];
+      partialInfo = r;
+      break;
+    }
+  }
+
+  $("cameraRead").innerHTML =
+    `<div class="small">OCR DETECTADO</div>
+     <div style="font-size:18px;font-weight:800;word-break:break-word">${cleaned || "Sin texto detectable"}</div>` +
+    (partialHit
+      ? `<div style="margin-top:8px"><span class="badge">✓ OCR — COINCIDENCIA</span>
+         <b>${partialHit.serial}</b><br>${partialHit.item || ""}
+         <div class="small">Coincidencia parcial usando ${partialInfo.used || "6+"} caracteres.</div></div>`
+      : `<div style="margin-top:8px"><span class="badge" style="background:#fee2e2;color:#991b1b">SIN COINCIDENCIA</span>
+         <div class="small">El texto detectado no identifica una sola serie del inventario.</div></div>`
+    );
+
+  if(partialHit) processCode(partialHit.serial);
 }
+
 
 function resetAll() {
   found.clear(); recent=[]; lastCode=""; lastTime=0; visibleCode=""; visibleCodeLastSeen=0;
