@@ -206,36 +206,44 @@ function findSerialSmart(raw){
 
   if(!input) return {type:"empty",matches:[]};
 
-  // Coincidencia exacta.
+  // Exact full-series match always wins.
   const exact = inventory.filter(x => norm(x.serial) === input);
   if(exact.length === 1){
-    return {type:"exact",matches:exact};
+    return {type:"exact",matches:exact,used:input.length};
   }
 
-  // Coincidencia parcial: mínimo 6 caracteres, siempre desde la derecha.
-  if(input.length >= 6){
-    for(let n=6; n<=input.length; n++){
-      const suffix = input.slice(-n);
-      const matches = inventory.filter(x => norm(x.serial).endsWith(suffix));
+  // Progressive right-to-left search:
+  // 1 char, then 2, then 3... until the suffix identifies ONE series.
+  // The moment there is exactly one candidate, return it for confirmation.
+  for(let n=1; n<=input.length; n++){
+    const suffix = input.slice(-n);
+    const matches = inventory.filter(x => norm(x.serial).endsWith(suffix));
 
-      if(matches.length === 1){
-        return {type:"partial",matches,used:n,suffix};
-      }
+    if(matches.length === 1){
+      return {
+        type:"unique",
+        matches,
+        used:n,
+        suffix
+      };
+    }
 
-      if(matches.length === 0 && n === input.length) break;
+    if(matches.length === 0 && n === input.length){
+      break;
     }
   }
 
-  // Para entradas cortas o ambiguas, mostrar coincidencias si existen.
-  const partial = input.length >= 1
-    ? inventory.filter(x => norm(x.serial).endsWith(input))
-    : [];
+  // If the complete input is still shared by multiple series, show them.
+  const fullPartial = inventory.filter(x =>
+    norm(x.serial).endsWith(input)
+  );
 
   return {
-    type: partial.length ? "ambiguous" : "none",
-    matches: partial
+    type: fullPartial.length ? "ambiguous" : "none",
+    matches: fullPartial
   };
 }
+
 
 function addActivity(status, hit, detail){
   recent.unshift({
@@ -266,59 +274,61 @@ function verify(){
     return;
   }
 
-  if(result.type === "exact" || result.type === "partial"){
+  // Exact complete series: verify immediately.
+  if(result.type === "exact"){
+    const hit = result.matches[0];
+    return verifyHit(hit, `Coincidencia exacta · ${result.used} caracteres`);
+  }
+
+  // A unique partial match is NOT automatically verified.
+  // Show the product and require physical confirmation.
+  if(result.type === "unique"){
     const hit = result.matches[0];
     const key = norm(hit.serial);
 
     if(found.has(key)){
       $("result").innerHTML = `
         <div class="result dup">
-          <span class="badge" style="background:#fef3c7;color:#92400e">⚠️ DUPLICADA</span>
+          <span class="badge" style="background:#fef3c7;color:#92400e">⚠️ YA VERIFICADA</span>
           <b>${escapeHtml(hit.serial)}</b>
-          <div class="small">${escapeHtml(hit.item)} · Esta serie ya estaba verificada.</div>
+          <div class="small">${escapeHtml(hit.item)} · Esta serie ya fue verificada.</div>
         </div>`;
-
-      addActivity("DUPLICADA", hit, "Ya estaba verificada");
-      renderRecent();
       $("manualSerial").value = "";
-      $("ready").textContent = "Duplicada. Listo para la siguiente serie.";
+      $("ready").textContent = "Ya estaba verificada. Listo para la siguiente.";
       focusInput();
       return;
     }
 
-    found.set(key, hit);
-
-    const method = result.type === "exact"
-      ? "Coincidencia exacta"
-      : `Coincidencia parcial · últimos ${result.used} caracteres`;
-
     $("result").innerHTML = `
-      <div class="result ok">
-        <span class="badge">✓ VERIFICADA</span>
-        <b>${escapeHtml(hit.serial)}</b>
-        <div class="small">${escapeHtml(hit.item)} · ${escapeHtml(hit.code)}</div>
-        <div class="small">${method}</div>
+      <div class="result multi">
+        <span class="badge" style="background:#dbeafe;color:#1d4ed8">
+          🔎 1 COINCIDENCIA
+        </span>
+        <div style="font-size:20px;font-weight:900;margin-top:8px;word-break:break-all">
+          ${escapeHtml(hit.serial)}
+        </div>
+        <div style="font-weight:700;margin-top:3px">
+          ${escapeHtml(hit.item || "Producto sin descripción")}
+        </div>
+        <div class="small" style="margin-top:3px">
+          ${escapeHtml(hit.code || "")}
+          · Coincidencia usando los últimos ${result.used} caracteres: <b>${escapeHtml(result.suffix)}</b>
+        </div>
+        <button id="confirmHit" style="margin-top:12px;width:100%">
+          ✓ VERIFICAR ESTA SERIE
+        </button>
       </div>`;
 
-    addActivity("VERIFICADA", hit, method);
+    $("confirmHit").onclick = () =>
+      verifyHit(hit, `Confirmada por el usuario · ${result.used} caracteres`);
 
-    $("last").style.display = "block";
-    $("lastSerial").textContent = hit.serial;
-    $("lastProduct").textContent =
-      [hit.item, hit.code].filter(Boolean).join(" · ");
-
-    update();
-
-    if(navigator.vibrate) navigator.vibrate(50);
-
-    $("manualSerial").value = "";
-    $("ready").textContent = "✓ Registrada. Listo para la siguiente serie.";
-    focusInput();
+    $("ready").textContent =
+      "Revisa físicamente el producto y pulsa «VERIFICAR ESTA SERIE».";
     return;
   }
 
   if(result.type === "ambiguous"){
-    const list = result.matches.slice(0,10).map(x =>
+    const list = result.matches.slice(0,12).map(x =>
       `<div>${escapeHtml(x.serial)} · ${escapeHtml(x.item)}</div>`
     ).join("");
 
@@ -328,12 +338,12 @@ function verify(){
           ⚠️ VARIAS COINCIDENCIAS
         </span>
         <div class="small" style="margin-top:5px">
-          Escribe más caracteres para identificar una sola serie.
+          Escribe más caracteres para reducirlo a una sola serie.
         </div>
         <div style="margin-top:7px">${list}</div>
       </div>`;
 
-    $("ready").textContent = "Se necesitan más caracteres.";
+    $("ready").textContent = "Todavía hay varias posibles series.";
     focusInput();
     return;
   }
@@ -351,6 +361,52 @@ function verify(){
   $("ready").textContent = "No se registró. Listo para intentar otra.";
   focusInput();
 }
+
+function verifyHit(hit, method){
+  const key = norm(hit.serial);
+
+  if(found.has(key)){
+    $("result").innerHTML = `
+      <div class="result dup">
+        <span class="badge" style="background:#fef3c7;color:#92400e">⚠️ DUPLICADA</span>
+        <b>${escapeHtml(hit.serial)}</b>
+        <div class="small">${escapeHtml(hit.item)} · Esta serie ya estaba verificada.</div>
+      </div>`;
+
+    addActivity("DUPLICADA", hit, "Ya estaba verificada");
+    renderRecent();
+    $("manualSerial").value = "";
+    $("ready").textContent = "Duplicada. Listo para la siguiente serie.";
+    focusInput();
+    return;
+  }
+
+  found.set(key, hit);
+
+  $("result").innerHTML = `
+    <div class="result ok">
+      <span class="badge">✓ VERIFICADA</span>
+      <b>${escapeHtml(hit.serial)}</b>
+      <div class="small">${escapeHtml(hit.item)} · ${escapeHtml(hit.code)}</div>
+      <div class="small">${escapeHtml(method)}</div>
+    </div>`;
+
+  addActivity("VERIFICADA", hit, method);
+
+  $("last").style.display = "block";
+  $("lastSerial").textContent = hit.serial;
+  $("lastProduct").textContent =
+    [hit.item, hit.code].filter(Boolean).join(" · ");
+
+  update();
+
+  if(navigator.vibrate) navigator.vibrate(50);
+
+  $("manualSerial").value = "";
+  $("ready").textContent = "✓ Registrada. Listo para la siguiente serie.";
+  focusInput();
+}
+
 
 function renderRecent(){
   if(!recent.length){
