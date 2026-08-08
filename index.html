@@ -58,7 +58,6 @@ table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:8px;bord
 </div>
 
 <div class="card">
-  <div class="small" id="secureNote" style="margin-bottom:10px"></div>
   <div class="row">
     <button id="start">📷 Iniciar escaneo</button>
     <button id="stop" class="secondary" disabled>Detener</button>
@@ -158,45 +157,41 @@ function processCode(raw) {
   recent=recent.slice(0,30); update();
 }
 
-let zxingReader = null;
-let zxingControls = null;
-
 async function startScan() {
   if(!inventory.length) { toast("Primero carga un inventario"); return; }
-  if(!window.ZXingBrowser) { toast("No se cargó el lector de códigos"); return; }
+  if(!navigator.mediaDevices?.getUserMedia) { toast("Este navegador no permite cámara"); return; }
   try {
-    zxingReader = new ZXingBrowser.BrowserMultiFormatReader();
-    scanning = true;
-    $("start").disabled = true;
-    $("stop").disabled = false;
-    $("scanHint").textContent = "Apunta al código de barras del S/N";
-
-    const devices = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
-    if(!devices.length) throw new Error("No se encontró cámara");
-    const back = devices.find(d => /back|rear|environment/i.test(d.label)) || devices[devices.length-1];
-
-    zxingControls = await zxingReader.decodeFromVideoDevice(
-      back.deviceId,
-      $("video"),
-      (result, err) => {
-        if(result) processCode(result.getText());
-      }
-    );
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false});
+    $("video").srcObject=stream; await $("video").play();
+    scanning=true; $("start").disabled=true; $("stop").disabled=false;
+    $("scanHint").textContent="Apunta al código de barras del S/N";
+    if("BarcodeDetector" in window) {
+      let formats = ["code_128","ean_13","ean_8","upc_a","upc_e","itf","codabar"];
+      try {
+        const supported=await BarcodeDetector.getSupportedFormats();
+        formats=formats.filter(f=>supported.includes(f));
+      } catch(e) {}
+      if(!formats.length) throw new Error("No hay formatos compatibles");
+      const detector=new BarcodeDetector({formats});
+      const loop=async()=>{
+        if(!scanning) return;
+        try {
+          const codes=await detector.detect($("video"));
+          for(const c of codes) processCode(c.rawValue);
+        } catch(e) {}
+        scanTimer=requestAnimationFrame(loop);
+      };
+      loop();
+    } else {
+      $("scanHint").textContent="Tu navegador no expone BarcodeDetector. Usa Chrome/Edge reciente.";
+    }
   } catch(e) {
-    console.error(e);
-    toast(location.protocol === "https:" || location.hostname === "localhost"
-      ? "No se pudo abrir la cámara"
-      : "La cámara requiere HTTPS. Abre el prototipo desde un enlace HTTPS.");
+    toast("No se pudo abrir la cámara");
     stopScan();
   }
 }
 function stopScan() {
-  scanning=false;
-  if(zxingControls) { try { zxingControls.stop(); } catch(e) {} }
-  zxingControls=null;
-  if(zxingReader) { try { zxingReader.reset(); } catch(e) {} }
-  zxingReader=null;
-  cancelAnimationFrame(scanTimer);
+  scanning=false; cancelAnimationFrame(scanTimer);
   if(stream) stream.getTracks().forEach(t=>t.stop());
   stream=null; $("video").srcObject=null;
   $("start").disabled=false; $("stop").disabled=true;
@@ -226,7 +221,6 @@ function exportCSV() {
 }
 
 $("useSample").onclick=()=>setInventory(EMBEDDED,"Inventario integrado de prueba");
-$("secureNote").innerHTML = (location.protocol==="https:" || location.hostname==="localhost") ? "🔒 Entorno seguro: la cámara puede solicitar permiso." : "⚠️ Este archivo está abierto directamente. Para usar la cámara debes abrirlo desde HTTPS.";
 $("reset").onclick=resetAll;
 $("start").onclick=startScan;
 $("stop").onclick=stopScan;
@@ -254,9 +248,7 @@ $("file").onchange=async e=>{
   }
 };
 setInventory(EMBEDDED,"Inventario integrado de prueba");
-$("secureNote").innerHTML = (location.protocol==="https:" || location.hostname==="localhost") ? "🔒 Entorno seguro: la cámara puede solicitar permiso." : "⚠️ Este archivo está abierto directamente. Para usar la cámara debes abrirlo desde HTTPS.";
 </script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-<script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js"></script>
 </body>
 </html>
