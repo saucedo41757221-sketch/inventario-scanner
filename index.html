@@ -55,6 +55,11 @@ table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:8px;bord
   </div>
   <div class="progress"><div id="bar"></div></div>
   <div id="status">Carga un inventario para comenzar.</div>
+  <div id="lastResult" style="display:none;margin-top:12px;padding:14px;border-radius:14px;background:#ecfdf5">
+    <div style="font-size:12px;font-weight:800;color:#166534">ÚLTIMA SERIE ENCONTRADA</div>
+    <div id="lastSerial" style="font-size:20px;font-weight:900;margin-top:3px;word-break:break-all"></div>
+    <div id="lastProduct" class="small" style="margin-top:3px"></div>
+  </div>
 </div>
 
 <div class="card">
@@ -63,15 +68,12 @@ table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:8px;bord
     <button id="stop" class="secondary" disabled>Detener</button>
     <button id="export" class="secondary">⬇️ Exportar resultado</button>
   </div>
-  <div id="reader">
-    <video id="video" playsinline muted></video>
-    <div id="scanHint">La cámara aparecerá aquí.</div>
-  </div>
-  <div class="small" style="margin-top:8px">Consejo: apunta al código de barras largo del número de serie. No necesitamos leer el EAN/UPC.</div>
+  <div id="reader"><div id="scanHint">La cámara aparecerá aquí.</div></div>
+  <div class="small" style="margin-top:8px">Consejo: apunta al código de barras del número de serie. El sistema solo acepta códigos que coincidan exactamente con una serie del inventario y descarta EAN/UPC y otros códigos.</div>
 </div>
 
 <div class="card">
-  <h3 style="margin-top:0">Últimas lecturas</h3>
+  <h3 style="margin-top:0">Actividad del inventario</h3>
   <div id="recent" class="small">Ninguna todavía.</div>
 </div>
 
@@ -91,6 +93,9 @@ let stream = null;
 let scanning = false;
 let lastCode = "";
 let lastTime = 0;
+let visibleCode = "";
+let visibleCodeLastSeen = 0;
+let codeResetTimer = null;
 let scanTimer = null;
 
 const $ = id => document.getElementById(id);
@@ -117,10 +122,10 @@ function update() {
   renderRecent(); renderMissing();
 }
 function renderRecent() {
-  if(!recent.length) { $("recent").textContent="Ninguna todavía."; return; }
+  if(!recent.length) { $("recent").textContent="Ninguna serie encontrada todavía."; return; }
   $("recent").innerHTML = recent.slice(0,12).map(x =>
-    `<div style="padding:6px 0;border-bottom:1px solid #eee">
-      <span class="badge">${x.status}</span> <b>${x.code}</b>
+    `<div style="padding:7px 0;border-bottom:1px solid #eee">
+      <span class="badge">✓ ENCONTRADA</span> <b>${x.code}</b>
       <div class="small">${x.detail}</div>
     </div>`).join("");
 }
@@ -137,68 +142,94 @@ function renderMissing() {
 function processCode(raw) {
   const code = norm(raw);
   if(!code) return;
+
+  // The loaded NoSerie column is the authoritative whitelist.
+  const hit = inventory.find(x => norm(x.serial) === code);
+  if(!hit) return; // Ignore EAN/UPC and every other barcode.
+
   const now = Date.now();
-  if(code===lastCode && now-lastTime<1200) return;
-  lastCode=code; lastTime=now;
-  const hit = inventory.find(x=>norm(x.serial)===code);
-  if(hit) {
-    if(found.has(code)) {
-      recent.unshift({code,status:"DUPLICADA",detail:hit.item||"Ya estaba registrada"});
-      toast("⚠️ Serie ya escaneada");
-    } else {
-      found.set(code,hit);
-      recent.unshift({code,status:"ENCONTRADA",detail:hit.item||"Coincide con inventario"});
-      toast("✓ Encontrada");
-    }
-  } else {
-    recent.unshift({code,status:"NO INVENTARIO",detail:"La serie no aparece en la lista cargada"});
-    toast("⚠️ No pertenece al inventario");
+  if(code === visibleCode && now - visibleCodeLastSeen < 1800) {
+    visibleCodeLastSeen = now;
+    return;
   }
-  recent=recent.slice(0,30); update();
+
+  visibleCode = code;
+  visibleCodeLastSeen = now;
+  clearTimeout(codeResetTimer);
+  codeResetTimer = setTimeout(() => {
+    visibleCode = "";
+    visibleCodeLastSeen = 0;
+  }, 1800);
+
+  if(found.has(code)) return; // Silent duplicate: do not inflate the count.
+
+  found.set(code, hit);
+  recent.unshift({
+    code,
+    status:"ENCONTRADA",
+    detail:hit.item || "Coincide con inventario"
+  });
+  recent = recent.slice(0,30);
+
+  $("lastResult").style.display = "block";
+  $("lastSerial").textContent = hit.serial;
+  $("lastProduct").textContent = [hit.item, hit.code].filter(Boolean).join(" · ");
+
+  // Small vibration on supported phones.
+  if(navigator.vibrate) navigator.vibrate(70);
+
+  toast("✓ Serie encontrada");
+  update();
 }
 
 async function startScan() {
   if(!inventory.length) { toast("Primero carga un inventario"); return; }
-  if(!navigator.mediaDevices?.getUserMedia) { toast("Este navegador no permite cámara"); return; }
+  if(!window.Html5Qrcode) { toast("No se cargó el lector. Recarga la página."); return; }
+
   try {
-    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false});
-    $("video").srcObject=stream; await $("video").play();
-    scanning=true; $("start").disabled=true; $("stop").disabled=false;
-    $("scanHint").textContent="Apunta al código de barras del S/N";
-    if("BarcodeDetector" in window) {
-      let formats = ["code_128","ean_13","ean_8","upc_a","upc_e","itf","codabar"];
-      try {
-        const supported=await BarcodeDetector.getSupportedFormats();
-        formats=formats.filter(f=>supported.includes(f));
-      } catch(e) {}
-      if(!formats.length) throw new Error("No hay formatos compatibles");
-      const detector=new BarcodeDetector({formats});
-      const loop=async()=>{
-        if(!scanning) return;
-        try {
-          const codes=await detector.detect($("video"));
-          for(const c of codes) processCode(c.rawValue);
-        } catch(e) {}
-        scanTimer=requestAnimationFrame(loop);
-      };
-      loop();
-    } else {
-      $("scanHint").textContent="Tu navegador no expone BarcodeDetector. Usa Chrome/Edge reciente.";
-    }
+    qrScanner = new Html5Qrcode("reader");
+    scanning = true;
+    $("start").disabled = true;
+    $("stop").disabled = false;
+    $("scanHint").textContent = "Apunta al código de barras del S/N";
+
+    await qrScanner.start(
+      { facingMode: "environment" },
+      {
+        fps: 12,
+        qrbox: { width: 300, height: 140 },
+        aspectRatio: 1.777778,
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.CODE_128
+        ]
+      },
+      decodedText => processCode(decodedText),
+      () => {}
+    );
   } catch(e) {
-    toast("No se pudo abrir la cámara");
+    console.error(e);
+    toast("No se pudo abrir la cámara. Revisa el permiso del navegador.");
     stopScan();
   }
 }
+
 function stopScan() {
-  scanning=false; cancelAnimationFrame(scanTimer);
-  if(stream) stream.getTracks().forEach(t=>t.stop());
-  stream=null; $("video").srcObject=null;
-  $("start").disabled=false; $("stop").disabled=true;
-  $("scanHint").textContent="La cámara está detenida.";
+  scanning = false;
+  if(qrScanner) {
+    qrScanner.stop().catch(()=>{}).finally(()=>{
+      try { qrScanner.clear(); } catch(e) {}
+      qrScanner = null;
+    });
+  }
+  $("start").disabled = false;
+  $("stop").disabled = true;
+  $("scanHint").textContent = "La cámara está detenida.";
 }
+
 function resetAll() {
-  found.clear(); recent=[]; lastCode=""; lastTime=0; update(); toast("Inventario reiniciado");
+  found.clear(); recent=[]; lastCode=""; lastTime=0; visibleCode=""; visibleCodeLastSeen=0;
+  $("lastResult").style.display="none";
+  update(); toast("Inventario reiniciado");
 }
 
 function csvEscape(v) {
@@ -211,7 +242,7 @@ function exportCSV() {
     const s=norm(x.serial), yes=found.has(s);
     rows.push([x.serial,x.item,x.code,x.warehouse,yes?"ENCONTRADA":"FALTANTE",yes?"SI":"NO"]);
   }
-  for(const r of recent.filter(x=>x.status==="NO INVENTARIO")) {
+  for(const r of []) {
     rows.push([r.code,"","","","NO PERTENECE AL INVENTARIO","SI"]);
   }
   const csv="\ufeff"+rows.map(r=>r.map(csvEscape).join(",")).join("\n");
@@ -250,5 +281,6 @@ $("file").onchange=async e=>{
 setInventory(EMBEDDED,"Inventario integrado de prueba");
 </script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 </body>
 </html>
