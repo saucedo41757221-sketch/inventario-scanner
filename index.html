@@ -100,7 +100,10 @@ let scanTimer = null;
 
 const $ = id => document.getElementById(id);
 function norm(s) {
-  return String(s ?? "").trim().toUpperCase().replace(/\s+/g,"");
+  return String(s ?? "")
+    .normalize("NFKC")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
 }
 function toast(msg) {
   $("toast").textContent = msg;
