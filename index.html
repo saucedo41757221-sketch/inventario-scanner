@@ -30,6 +30,7 @@ table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:8px;bord
 .small{font-size:12px;color:#6b7280}
 #toast{position:fixed;left:16px;right:16px;bottom:16px;background:#111827;color:white;padding:12px 14px;border-radius:12px;display:none;z-index:10}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -76,14 +77,17 @@ table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:8px;bord
     <button id="start">📷 Iniciar escaneo</button>
     <button id="stop" class="secondary" disabled>Detener</button>
     <button id="export" class="secondary">⬇️ Exportar resultado</button>
+    <button id="ocr" class="secondary">🔤 Buscar texto</button>
   </div>
   <div id="reader"><div id="scanHint">La cámara aparecerá aquí.</div></div>
-  <div class="small" style="margin-top:8px">Consejo: apunta al código de barras del número de serie. El sistema solo acepta códigos que coincidan exactamente con una serie del inventario y descarta EAN/UPC y otros códigos.</div>
+  <div class="small" style="margin-top:8px">Consejo: apunta al código de barras del número de serie. El lector acepta varias simbologías; solo una lectura que pueda validarse contra una serie del inventario se marca como encontrada. Si no, se ignora.</div>
 </div>
 
 <div class="card">
   
 <h3 style="margin-top:0">Diagnóstico de cámara</h3>
+
+<div id="ocrStatus" class="small" style="margin-top:10px"></div>
 <div id="cameraRead" style="padding:12px;border:1px solid #ddd;border-radius:10px;background:#fafafa">
   <div class="small">Todavía no se ha detectado ningún código.</div>
 </div>
@@ -237,7 +241,15 @@ async function startScan() {
         qrbox: { width: 300, height: 140 },
         aspectRatio: 1.777778,
         formatsToSupport: [
-          Html5QrcodeSupportedFormats.CODE_128
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.CODE_93,
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.ITF,
+          Html5QrcodeSupportedFormats.CODABAR
         ]
       },
       decodedText => processCode(decodedText),
@@ -327,6 +339,129 @@ $("manualSerial").addEventListener("keydown", e => {
 });
 
 
+
+let ocrBusy = false;
+let ocrWorker = null;
+
+function getCameraVideo() {
+  return document.querySelector("#reader video");
+}
+
+function ocrCandidates(text) {
+  const cleaned = String(text || "").toUpperCase();
+  // Keep alphanumeric runs; OCR often returns S/N, labels, or punctuation around the serial.
+  const tokens = cleaned.match(/[A-Z0-9]{6,}/g) || [];
+  const candidates = new Set(tokens);
+
+  // Also generate compacted text, useful when OCR inserts spaces between characters.
+  const compact = norm(cleaned);
+  if(compact.length >= 6) candidates.add(compact);
+
+  // The Excel remains the source of truth. Look for any inventory serial
+  // contained inside the OCR text, including when OCR captures "SN" or labels.
+  const inventoryHits = [];
+  for(const x of inventory) {
+    const s = norm(x.serial);
+    if(s.length >= 6 && compact.includes(s)) inventoryHits.push(x);
+  }
+
+  return { tokens:[...candidates], inventoryHits };
+}
+
+async function ensureOcrWorker() {
+  if(ocrWorker) return ocrWorker;
+  if(!window.Tesseract) throw new Error("No se cargó el motor OCR. Recarga la página.");
+  $("ocrStatus").textContent = "Cargando motor OCR…";
+  ocrWorker = await Tesseract.createWorker("eng");
+  await ocrWorker.setParameters({
+    tessedit_pageseg_mode: "11",
+    preserve_interword_spaces: "1"
+  });
+  return ocrWorker;
+}
+
+async function runOCR() {
+  if(ocrBusy) return;
+  if(!inventory.length) { toast("Primero carga un inventario"); return; }
+
+  const video = getCameraVideo();
+  if(!video || !video.videoWidth) {
+    toast("Inicia la cámara antes de buscar texto");
+    return;
+  }
+
+  ocrBusy = true;
+  $("ocr").disabled = true;
+  $("ocrStatus").textContent = "Analizando texto de la imagen…";
+
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d", {willReadFrequently:true});
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // OCR is a fallback. Analyze the central scanning area first, where the label is expected.
+    const cropW = Math.floor(canvas.width * 0.92);
+    const cropH = Math.floor(canvas.height * 0.58);
+    const sx = Math.floor((canvas.width - cropW) / 2);
+    const sy = Math.floor((canvas.height - cropH) / 2);
+    const crop = document.createElement("canvas");
+    crop.width = cropW;
+    crop.height = cropH;
+    crop.getContext("2d").drawImage(canvas, sx, sy, cropW, cropH, 0, 0, cropW, cropH);
+
+    const worker = await ensureOcrWorker();
+    const result = await worker.recognize(crop);
+    const ocrText = result.data.text || "";
+    const parsed = ocrCandidates(ocrText);
+
+    $("cameraRead").innerHTML =
+      `<div class="small">OCR — TEXTO DETECTADO</div>
+       <div style="font-size:16px;font-weight:700;white-space:pre-wrap;word-break:break-word">${ocrText.replaceAll("<","&lt;").replaceAll(">","&gt;") || "(sin texto)"}</div>`;
+
+    // Strongest case: a complete inventory serial appears in the OCR text.
+    if(parsed.inventoryHits.length === 1) {
+      processCode(parsed.inventoryHits[0].serial);
+      $("ocrStatus").textContent = "✓ El OCR identificó una única serie del inventario.";
+      return;
+    }
+    if(parsed.inventoryHits.length > 1) {
+      $("ocrStatus").textContent = "⚠️ El OCR detectó varias series; no se marcó ninguna.";
+      toast("OCR: varias series detectadas");
+      return;
+    }
+
+    // Otherwise try the same exact/partial matcher against OCR tokens.
+    const hits = [];
+    for(const token of parsed.tokens) {
+      const r = findSerialSmart(token);
+      if(r.matches.length === 1) {
+        const hit = r.matches[0];
+        if(!hits.some(x => norm(x.serial) === norm(hit.serial))) hits.push(hit);
+      }
+    }
+
+    if(hits.length === 1) {
+      processCode(hits[0].serial);
+      $("ocrStatus").textContent = `✓ Serie identificada por OCR: ${hits[0].serial}`;
+    } else if(hits.length > 1) {
+      $("ocrStatus").textContent = "⚠️ El OCR produjo varias coincidencias; no se marcó ninguna.";
+      toast("OCR: varias coincidencias");
+    } else {
+      $("ocrStatus").textContent = "No se encontró una serie única en el texto.";
+      toast("OCR: no se encontró una serie");
+    }
+  } catch(e) {
+    console.error(e);
+    $("ocrStatus").textContent = "No se pudo analizar el texto.";
+    toast("Error al ejecutar OCR");
+  } finally {
+    ocrBusy = false;
+    $("ocr").disabled = false;
+  }
+}
+
 function resetAll() {
   found.clear(); recent=[]; lastCode=""; lastTime=0; visibleCode=""; visibleCodeLastSeen=0;
   $("lastResult").style.display="none";
@@ -357,6 +492,7 @@ $("reset").onclick=resetAll;
 $("start").onclick=startScan;
 $("stop").onclick=stopScan;
 $("export").onclick=exportCSV;
+$("ocr").onclick=runOCR;
 
 $("file").onchange=async e=>{
   const file=e.target.files[0]; if(!file)return;
