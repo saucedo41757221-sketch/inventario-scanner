@@ -82,7 +82,16 @@ table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:8px;bord
 </div>
 
 <div class="card">
-  <h3 style="margin-top:0">Actividad del inventario</h3>
+  
+<h3 style="margin-top:0">Diagnóstico de cámara</h3>
+<div id="cameraRead" style="padding:12px;border:1px solid #ddd;border-radius:10px;background:#fafafa">
+  <div class="small">Todavía no se ha detectado ningún código.</div>
+</div>
+<div class="small" style="margin-top:6px">
+  Esta lectura es solo diagnóstica: muestra exactamente qué entrega la cámara al sistema.
+</div>
+
+<h3 style="margin-top:0">Actividad del inventario</h3>
   <div id="recent" class="small">Ninguna todavía.</div>
 </div>
 
@@ -149,12 +158,31 @@ function renderMissing() {
   ).join("") + (missing.length>100 ? `<div class="small">… y ${missing.length-100} más.</div>` : "");
 }
 function processCode(raw) {
-  const code = norm(raw);
+  const rawText = String(raw ?? "");
+  const code = norm(rawText);
   if(!code) return;
 
-  // The loaded NoSerie column is the authoritative whitelist.
-  const hit = inventory.find(x => norm(x.serial) === code);
-  if(!hit) return; // Ignore EAN/UPC and every other barcode.
+  // Always show exactly what the camera decoder delivered.
+  $("cameraRead").innerHTML =
+    `<div class="small">LECTURA BRUTA</div>
+     <div style="font-size:20px;font-weight:900;word-break:break-all">${rawText}</div>
+     <div class="small" style="margin-top:4px">NORMALIZADA: <b>${code}</b></div>`;
+
+  const smart = findSerialSmart(code);
+  const hit = smart.matches.length === 1 ? smart.matches[0] : null;
+
+  if(!hit) {
+    const nowReject = Date.now();
+    if (nowReject - (window.__lastRejectTime || 0) > 900) {
+      window.__lastRejectTime = nowReject;
+      if(smart.type === "ambiguous") {
+        toast("Código leído: hay varias coincidencias");
+      } else {
+        toast("Código leído, pero no hay coincidencia única");
+      }
+    }
+    return;
+  }
 
   const now = Date.now();
   if(code === visibleCode && now - visibleCodeLastSeen < 1800) {
@@ -170,11 +198,12 @@ function processCode(raw) {
     visibleCodeLastSeen = 0;
   }, 1800);
 
-  if(found.has(code)) return; // Silent duplicate: do not inflate the count.
+  const foundKey = norm(hit.serial);
+  if(found.has(foundKey)) return;
 
-  found.set(code, hit);
+  found.set(foundKey, hit);
   recent.unshift({
-    code,
+    code: hit.serial,
     status:"ENCONTRADA",
     detail:hit.item || "Coincide con inventario"
   });
@@ -183,10 +212,9 @@ function processCode(raw) {
   $("lastResult").style.display = "block";
   $("lastSerial").textContent = hit.serial;
   $("lastProduct").textContent = [hit.item, hit.code].filter(Boolean).join(" · ");
+  if($("lastKey")) $("lastKey").textContent = "Clave: " + foundKey;
 
-  // Small vibration on supported phones.
   if(navigator.vibrate) navigator.vibrate(70);
-
   toast("✓ Serie encontrada");
   update();
 }
