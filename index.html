@@ -236,20 +236,63 @@ function stopScan() {
 }
 
 
+function findSerialSmart(rawInput) {
+  const input = norm(rawInput);
+  if(!input) return { type:"empty", matches:[] };
+
+  // 1. Exact match always wins.
+  const exact = inventory.filter(x => norm(x.serial) === input);
+  if(exact.length === 1) return { type:"exact", matches:exact };
+
+  // 2. If no exact match, progressively use the rightmost characters,
+  // starting at 6 and increasing until the match becomes unique.
+  const min = Math.min(6, input.length);
+  for(let n=min; n<=input.length; n++) {
+    const suffix = input.slice(-n);
+    const matches = inventory.filter(x => norm(x.serial).endsWith(suffix));
+    if(matches.length === 1) return { type:"partial", matches, used:n, suffix };
+    if(matches.length === 0 && n === input.length) break;
+  }
+
+  // If there are multiple matches even at full input, return them for review.
+  const full = inventory.filter(x => norm(x.serial).endsWith(input));
+  return { type: full.length ? "ambiguous" : "none", matches:full };
+}
+
 function manualSearch() {
   const raw = $("manualSerial").value;
-  const code = norm(raw);
-  const hit = inventory.find(x => norm(x.serial) === code);
-  if(hit) {
+  const result = findSerialSmart(raw);
+
+  if(result.type === "exact") {
+    const hit = result.matches[0];
     $("manualResult").innerHTML =
-      `<span class="badge">✓ ENCONTRADA</span> <b>${hit.serial}</b><br>` +
+      `<span class="badge">✓ COINCIDENCIA EXACTA</span> <b>${hit.serial}</b><br>` +
       `${hit.item || ""} · ${hit.code || ""}`;
-  } else {
-    $("manualResult").innerHTML =
-      `<span class="badge" style="background:#fee2e2;color:#991b1b">NO ENCONTRADA</span> ` +
-      `La clave normalizada es: <b>${code}</b>`;
+    return;
   }
+
+  if(result.type === "partial") {
+    const hit = result.matches[0];
+    $("manualResult").innerHTML =
+      `<span class="badge">✓ COINCIDENCIA PARCIAL</span> <b>${hit.serial}</b><br>` +
+      `${hit.item || ""} · ${hit.code || ""}<br>` +
+      `<span class="small">Coincidencia única usando los últimos ${result.used} caracteres: ${result.suffix}</span>`;
+    return;
+  }
+
+  if(result.type === "ambiguous") {
+    $("manualResult").innerHTML =
+      `<span class="badge" style="background:#fef3c7;color:#92400e">⚠️ VARIAS COINCIDENCIAS</span><br>` +
+      result.matches.map(x => `<b>${x.serial}</b> · ${x.item || ""}`).join("<br>") +
+      `<br><span class="small">Ingresa más caracteres para identificar una sola serie.</span>`;
+    return;
+  }
+
+  $("manualResult").innerHTML =
+    `<span class="badge" style="background:#fee2e2;color:#991b1b">NO ENCONTRADA</span><br>` +
+    `No hay coincidencia única con esta entrada.`;
 }
+
 $("manualSearch").addEventListener("click", manualSearch);
 $("manualSerial").addEventListener("keydown", e => {
   if(e.key === "Enter") manualSearch();
