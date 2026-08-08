@@ -69,7 +69,7 @@ table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:8px;bord
     <button id="export" class="secondary">⬇️ Exportar resultado</button>
   </div>
   <div id="reader"><div id="scanHint">La cámara aparecerá aquí.</div></div>
-  <div class="small" style="margin-top:8px">Consejo: apunta al código de barras del número de serie. El sistema solo acepta códigos que coincidan exactamente con una serie del inventario y descarta EAN/UPC y otros códigos.</div>
+  <div class="small" style="margin-top:8px">Apunta al código de barras del número de serie. El lector admite varios formatos, pero solo acepta una lectura si coincide exactamente con una serie del inventario.</div>
 </div>
 
 <div class="card">
@@ -145,7 +145,14 @@ function processCode(raw) {
 
   // The loaded NoSerie column is the authoritative whitelist.
   const hit = inventory.find(x => norm(x.serial) === code);
-  if(!hit) return; // Ignore EAN/UPC and every other barcode.
+  if(!hit) {
+    const nowReject = Date.now();
+    if (nowReject - (window.__lastRejectTime || 0) > 900) {
+      window.__lastRejectTime = nowReject;
+      toast("Código leído, pero no corresponde a una serie del inventario");
+    }
+    return;
+  }
 
   const now = Date.now();
   if(code === visibleCode && now - visibleCodeLastSeen < 1800) {
@@ -200,7 +207,14 @@ async function startScan() {
         qrbox: { width: 300, height: 140 },
         aspectRatio: 1.777778,
         formatsToSupport: [
-          Html5QrcodeSupportedFormats.CODE_128
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.CODE_93,
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.ITF
         ]
       },
       decodedText => processCode(decodedText),
