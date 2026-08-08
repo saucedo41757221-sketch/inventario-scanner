@@ -2,121 +2,131 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#111827">
 <title>Verificación de Inventario</title>
+
+<!-- ÚNICA dependencia externa: lectura de Excel -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
 <style>
-:root{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#111827;background:#f3f4f6}
-*{box-sizing:border-box} body{margin:0} .wrap{max-width:760px;margin:auto;padding:16px}
+:root{
+  font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  color:#111827;background:#f3f4f6
+}
+*{box-sizing:border-box}
+body{margin:0}
+.wrap{max-width:820px;margin:auto;padding:16px}
 header{background:#111827;color:white;padding:18px;border-radius:16px;margin-bottom:12px}
-h1{font-size:22px;margin:0 0 4px} .muted{opacity:.75;font-size:13px}
+h1{font-size:22px;margin:0 0 4px}
+.muted{opacity:.75;font-size:13px}
 .card{background:white;border-radius:16px;padding:16px;margin:12px 0;box-shadow:0 1px 5px #0001}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-button,label.file{border:0;border-radius:12px;padding:12px 14px;font-weight:700;background:#111827;color:#fff;cursor:pointer;display:inline-block}
+button,label.file{
+  border:0;border-radius:12px;padding:12px 14px;font-weight:700;
+  background:#111827;color:#fff;cursor:pointer;display:inline-block
+}
 button.secondary,label.file.secondary{background:#e5e7eb;color:#111827}
-button:disabled{opacity:.45}
 input[type=file]{display:none}
+input[type=text]{
+  width:100%;font-size:19px;padding:14px;border:2px solid #d1d5db;
+  border-radius:12px;outline:none
+}
+input[type=text]:focus{border-color:#111827}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .stat{background:#f9fafb;border-radius:12px;padding:12px;text-align:center}
-.num{font-size:24px;font-weight:800} .ok{color:#15803d} .bad{color:#b91c1c} .warn{color:#b45309}
+.num{font-size:26px;font-weight:800}
+.ok{color:#15803d}.bad{color:#b91c1c}.warn{color:#b45309}
 #status{font-weight:700;margin-top:10px}
 .progress{height:12px;background:#e5e7eb;border-radius:99px;overflow:hidden;margin-top:10px}
 .progress>div{height:100%;width:0;background:#16a34a;transition:width .2s}
-table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:8px;border-bottom:1px solid #e5e7eb;text-align:left;vertical-align:top}
-.badge{padding:3px 7px;border-radius:999px;background:#dcfce7;color:#166534;font-weight:700;font-size:11px}
+.badge{padding:4px 8px;border-radius:999px;background:#dcfce7;color:#166534;font-weight:700;font-size:11px}
 .small{font-size:12px;color:#6b7280}
-#toast{position:fixed;left:16px;right:16px;bottom:16px;background:#111827;color:white;padding:12px 14px;border-radius:12px;display:none;z-index:10}
+#toast{
+  position:fixed;left:16px;right:16px;bottom:16px;background:#111827;color:white;
+  padding:12px 14px;border-radius:12px;display:none;z-index:10
+}
+.result{padding:12px;border-radius:12px;margin-top:10px}
+.result.ok{background:#ecfdf5;border:1px solid #86efac}
+.result.dup{background:#fffbeb;border:1px solid #f59e0b}
+.result.no{background:#fef2f2;border:1px solid #fca5a5}
+.result.multi{background:#fffbeb;border:1px solid #f59e0b}
+.listrow{padding:8px 0;border-bottom:1px solid #eee}
+@media(max-width:560px){
+  .stats{grid-template-columns:1fr 1fr 1fr}
+  .num{font-size:22px}
+}
 </style>
 </head>
+
 <body>
 <div class="wrap">
+
 <header>
   <h1>📦 Verificación de Inventario</h1>
-  <div class="muted">Verificación manual · Inventario · v1.9</div>
+  <div class="muted">Excel → serie → verificación física</div>
 </header>
 
-
 <div class="card">
-  <h3 style="margin-top:0">Verificación de serie</h3>
+  <h3 style="margin-top:0">1. Cargar inventario</h3>
   <div class="row">
-    <input id="manualSerial" placeholder="Escribe una serie, por ejemplo 1581FA6QC265V01CCB75" style="flex:1;min-width:220px">
-    <button id="manualSearch">Buscar en inventario</button>
-  </div>
-  <div id="manualResult" class="small" style="margin-top:10px"></div>
-</div>
-<div class="card">
-  <div class="row">
-    <label class="file secondary">📄 Cargar Excel<input id="file" type="file" accept=".xlsx,.xls"></label>
-    
+    <label class="file secondary">
+      📄 Seleccionar Excel
+      <input id="file" type="file" accept=".xlsx,.xls">
+    </label>
     <button id="reset" class="secondary">Reiniciar</button>
-  </div>
-  <p id="source" class="small">Ningún inventario cargado.</p>
-</div>
-
-<div class="card">
-  <div class="stats">
-    <div class="stat"><div class="num" id="expected">0</div><div class="small">Esperadas</div></div>
-    <div class="stat"><div class="num ok" id="found">0</div><div class="small">Encontradas</div></div>
-    <div class="stat"><div class="num bad" id="missing">0</div><div class="small">Faltantes</div></div>
-  </div>
-  <div class="progress"><div id="bar"></div></div>
-  <div id="status">Carga un inventario para comenzar.</div>
-  <div id="lastResult" style="display:none;margin-top:12px;padding:14px;border-radius:14px;background:#ecfdf5">
-    <div style="font-size:12px;font-weight:800;color:#166534">ÚLTIMA SERIE ENCONTRADA</div>
-    <div id="lastSerial" style="font-size:20px;font-weight:900;margin-top:3px;word-break:break-all"></div>
-    <div id="lastProduct" class="small" style="margin-top:3px"></div>
-  </div>
-</div>
-
-
-<div class="card" id="manualPanel">
-  <h3 style="margin-top:0">Verificación manual</h3>
-  <p class="small" style="margin-top:0">
-    Escribe la serie o utiliza la pistola de códigos como si fuera un teclado.
-    Al presionar <b>Enter</b>, el sistema la busca y, si identifica una sola serie
-    del inventario, la marca como <b>VERIFICADA</b>.
-  </p>
-
-  <div class="row">
-    <input id="manualSerial"
-      autocomplete="off"
-      autocapitalize="characters"
-      spellcheck="false"
-      placeholder="Ingresa o escanea una serie"
-      style="flex:1;min-width:220px;font-size:18px;padding:14px;border:2px solid #d1d5db;border-radius:12px">
-    <button id="manualSearch">✓ Verificar</button>
-    <button id="manualClear" class="secondary">Limpiar</button>
-  </div>
-
-  <div id="manualReady" class="small" style="margin-top:8px">
-    Campo listo para recibir la siguiente serie.
-  </div>
-  <div id="manualResult" style="margin-top:10px"></div>
-</div>
-
-<div class="card">
-  <div class="row">
-    <label class="file secondary">📄 Cargar Excel<input id="file" type="file" accept=".xlsx,.xls"></label>
-    <button id="reset" class="secondary">Reiniciar verificación</button>
     <button id="export" class="secondary">⬇️ Exportar resultado</button>
   </div>
   <p id="source" class="small">Ningún inventario cargado.</p>
 </div>
 
 <div class="card">
-  <div class="stats">
-    <div class="stat"><div class="num" id="expected">0</div><div class="small">Esperadas</div></div>
-    <div class="stat"><div class="num ok" id="found">0</div><div class="small">Verificadas</div></div>
-    <div class="stat"><div class="num bad" id="missing">0</div><div class="small">Restantes</div></div>
+  <h3 style="margin-top:0">2. Verificar serie</h3>
+  <p class="small">
+    Escribe la serie o utiliza la pistola de códigos de barras.
+    Si la pistola envía Enter automáticamente, la verificación será automática.
+  </p>
+
+  <input id="manualSerial" type="text"
+    autocomplete="off" autocapitalize="characters"
+    spellcheck="false"
+    placeholder="Escribe o escanea una serie">
+
+  <div class="row" style="margin-top:8px">
+    <button id="verify">✓ Verificar</button>
+    <button id="clear" class="secondary">Limpiar</button>
   </div>
+
+  <div id="ready" class="small" style="margin-top:8px">
+    Carga el Excel para comenzar.
+  </div>
+
+  <div id="result"></div>
+</div>
+
+<div class="card">
+  <div class="stats">
+    <div class="stat">
+      <div class="num" id="expected">0</div>
+      <div class="small">Esperadas</div>
+    </div>
+    <div class="stat">
+      <div class="num ok" id="found">0</div>
+      <div class="small">Verificadas</div>
+    </div>
+    <div class="stat">
+      <div class="num bad" id="missing">0</div>
+      <div class="small">Restantes</div>
+    </div>
+  </div>
+
   <div class="progress"><div id="bar"></div></div>
   <div id="status">Carga un inventario para comenzar.</div>
 
-  <div id="lastResult" style="display:none;margin-top:12px;padding:14px;border-radius:14px;background:#ecfdf5">
-    <div style="font-size:12px;font-weight:800;color:#166534">ÚLTIMA SERIE VERIFICADA</div>
+  <div id="last" style="display:none;margin-top:12px;padding:14px;border-radius:14px;background:#ecfdf5">
+    <div style="font-size:12px;font-weight:800;color:#166534">ÚLTIMA VERIFICACIÓN</div>
     <div id="lastSerial" style="font-size:20px;font-weight:900;margin-top:3px;word-break:break-all"></div>
     <div id="lastProduct" class="small" style="margin-top:3px"></div>
-    <div id="lastKey" class="small" style="margin-top:4px"></div>
   </div>
 </div>
 
@@ -127,209 +137,152 @@ table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:8px;bord
 
 <div class="card">
   <h3 style="margin-top:0">Series restantes</h3>
-  <div id="missingList" class="small">Las series no verificadas aparecen aquí.</div>
+  <div id="missingList" class="small">Las series no verificadas aparecerán aquí.</div>
 </div>
+
 </div>
 <div id="toast"></div>
 
 <script>
+"use strict";
+
 let inventory = [];
 let found = new Map();
 let recent = [];
- [];
-let found = new Map();
-let recent = [];
-let stream = null;
-let scanning = false;
-let lastCode = "";
-let lastTime = 0;
-let visibleCode = "";
-let visibleCodeLastSeen = 0;
-let codeResetTimer = null;
+
 const $ = id => document.getElementById(id);
-function norm(s) {
-  return String(s ?? "").trim().toUpperCase().replace(/\s+/g,"");
+
+function norm(value){
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g,"");
 }
-function toast(msg) {
+
+function toast(msg){
   $("toast").textContent = msg;
   $("toast").style.display = "block";
   clearTimeout(window.__toast);
-  window.__toast = setTimeout(()=>$("toast").style.display="none",1800);
+  window.__toast = setTimeout(() => $("toast").style.display = "none", 2200);
 }
-function setInventory(data, source) {
+
+function focusInput(){
+  const el = $("manualSerial");
+  el.focus();
+  try { el.select(); } catch(e){}
+}
+
+function setInventory(data, source){
   inventory = data.filter(x => norm(x.serial));
-  found.clear(); recent = [];
-  $("source").textContent = `${source} · ${inventory.length} series serializadas`;
+  found.clear();
+  recent = [];
+
+  $("source").textContent = `✓ ${source} · ${inventory.length} series cargadas`;
+  $("ready").textContent = "Campo listo. Escribe o escanea la siguiente serie.";
   update();
-}
-function update() {
-  const n = inventory.length, f = found.size, m = Math.max(0,n-f);
-  $("expected").textContent=n; $("found").textContent=f; $("missing").textContent=m;
-  $("bar").style.width=(n ? (f/n*100) : 0)+"%";
-  $("status").textContent=n ? `${f} de ${n} verificadas · ${m} pendientes` : "Carga un inventario.";
-  renderRecent(); renderMissing();
-}
-function renderRecent() {
-  if(!recent.length) {
-    $("recent").textContent="Ninguna actividad todavía.";
-    return;
-  }
-
-  $("recent").innerHTML = recent.slice(0,15).map(x => {
-    const dup = x.status === "DUPLICADA";
-    return `<div style="padding:8px 0;border-bottom:1px solid #eee">
-      <span class="badge" style="${dup ? 'background:#fef3c7;color:#92400e' : ''}">
-        ${dup ? '⚠️ DUPLICADA' : '✓ VERIFICADA'}
-      </span>
-      <b>${x.code}</b>
-      <div class="small">${x.detail}</div>
-    </div>`;
-  }).join("");
+  focusInput();
 }
 
-function renderMissing() {
-  const missing = inventory.filter(x=>!found.has(norm(x.serial)));
-  if(!missing.length) {
-    $("missingList").innerHTML = inventory.length ? "<b class='ok'>✓ No hay faltantes.</b>" : "Sin datos.";
-    return;
-  }
-  $("missingList").innerHTML = missing.slice(0,100).map(x =>
-    `<div style="padding:6px 0;border-bottom:1px solid #eee"><b>${x.serial}</b><div class="small">${x.item} · ${x.code}</div></div>`
-  ).join("") + (missing.length>100 ? `<div class="small">… y ${missing.length-100} más.</div>` : "");
-}
-function processCode(raw) {
-  const rawText = String(raw ?? "");
-  const code = norm(rawText);
-  if(!code) return;
+function update(){
+  const expected = inventory.length;
+  const verified = found.size;
+  const missing = Math.max(0, expected - verified);
 
-  // Always show exactly what the camera decoder delivered.
-  $("cameraRead").innerHTML =
-    `<div class="small">LECTURA BRUTA</div>
-     <div style="font-size:20px;font-weight:900;word-break:break-all">${rawText}</div>
-     <div class="small" style="margin-top:4px">NORMALIZADA: <b>${code}</b></div>`;
+  $("expected").textContent = expected;
+  $("found").textContent = verified;
+  $("missing").textContent = missing;
+  $("bar").style.width = (expected ? verified / expected * 100 : 0) + "%";
 
-  const smart = findSerialSmart(code);
-  const hit = smart.matches.length === 1 ? smart.matches[0] : null;
+  $("status").textContent = expected
+    ? `${verified} de ${expected} verificadas · ${missing} restantes`
+    : "Carga un inventario para comenzar.";
 
-  if(!hit) {
-    const nowReject = Date.now();
-    if (nowReject - (window.__lastRejectTime || 0) > 900) {
-      window.__lastRejectTime = nowReject;
-      if(smart.type === "ambiguous") {
-        toast("Código leído: hay varias coincidencias");
-      } else {
-        toast("Código leído, pero no hay coincidencia única");
-      }
-    }
-    return;
-  }
-
-  const now = Date.now();
-  if(code === visibleCode && now - visibleCodeLastSeen < 1800) {
-    visibleCodeLastSeen = now;
-    return;
-  }
-
-  visibleCode = code;
-  visibleCodeLastSeen = now;
-  clearTimeout(codeResetTimer);
-  codeResetTimer = setTimeout(() => {
-    visibleCode = "";
-    visibleCodeLastSeen = 0;
-  }, 1800);
-
-  const foundKey = norm(hit.serial);
-  if(found.has(foundKey)) return;
-
-  found.set(foundKey, hit);
-  recent.unshift({
-    code: hit.serial,
-    status:"ENCONTRADA",
-    detail:hit.item || "Coincide con inventario"
-  });
-  recent = recent.slice(0,30);
-
-  $("lastResult").style.display = "block";
-  $("lastSerial").textContent = hit.serial;
-  $("lastProduct").textContent = [hit.item, hit.code].filter(Boolean).join(" · ");
-  if($("lastKey")) $("lastKey").textContent = "Clave: " + foundKey;
-
-  if(navigator.vibrate) navigator.vibrate(70);
-  toast("✓ Serie encontrada");
-  update();
+  renderRecent();
+  renderMissing();
 }
 
-async function findSerialSmart(rawInput) {
-  const input = norm(rawInput);
-  if(!input) return { type:"empty", matches:[] };
+function findSerialSmart(raw){
+  const input = norm(raw);
 
-  // 1. Exact match always wins.
+  if(!input) return {type:"empty",matches:[]};
+
+  // Coincidencia exacta.
   const exact = inventory.filter(x => norm(x.serial) === input);
-  if(exact.length === 1) return { type:"exact", matches:exact };
+  if(exact.length === 1){
+    return {type:"exact",matches:exact};
+  }
 
-  // 2. Partial matching is only allowed from 6 characters.
-  // Start with the RIGHTMOST 6 characters and add characters until
-  // the result identifies one unique serial.
-  if(input.length >= 6) {
-    for(let n=6; n<=input.length; n++) {
+  // Coincidencia parcial: mínimo 6 caracteres, siempre desde la derecha.
+  if(input.length >= 6){
+    for(let n=6; n<=input.length; n++){
       const suffix = input.slice(-n);
       const matches = inventory.filter(x => norm(x.serial).endsWith(suffix));
 
-      if(matches.length === 1) {
-        return { type:"partial", matches, used:n, suffix };
+      if(matches.length === 1){
+        return {type:"partial",matches,used:n,suffix};
       }
 
       if(matches.length === 0 && n === input.length) break;
     }
   }
 
-  // Multiple matches are returned so the user knows more characters
-  // are required.
-  const full = inventory.filter(x => norm(x.serial).endsWith(input));
-  return { type:full.length ? "ambiguous" : "none", matches:full };
+  // Para entradas cortas o ambiguas, mostrar coincidencias si existen.
+  const partial = input.length >= 1
+    ? inventory.filter(x => norm(x.serial).endsWith(input))
+    : [];
+
+  return {
+    type: partial.length ? "ambiguous" : "none",
+    matches: partial
+  };
 }
 
-function focusManual() {
-  const el = $("manualSerial");
-  if(!el) return;
-  el.focus();
-  try { el.select(); } catch(e) {}
-}
-
-function addActivity(status, hit, extra="") {
+function addActivity(status, hit, detail){
   recent.unshift({
-    code: hit.serial,
+    serial: hit.serial,
     status,
-    detail: [hit.item, hit.code, extra].filter(Boolean).join(" · ")
+    detail: detail || "",
+    item: hit.item || ""
   });
-  recent = recent.slice(0,30);
+  recent = recent.slice(0,20);
 }
 
-function verifyManual() {
-  const raw = $("manualSerial").value;
-  const result = findSerialSmart(raw);
-
-  if(result.type === "empty") {
-    $("manualResult").innerHTML =
-      `<div class="badge" style="background:#f3f4f6;color:#374151">ESCRIBE O ESCANEA UNA SERIE</div>`;
-    focusManual();
+function verify(){
+  if(!inventory.length){
+    $("result").innerHTML =
+      '<div class="result no"><b>Primero carga el Excel.</b></div>';
+    toast("Carga el inventario primero.");
+    focusInput();
     return;
   }
 
-  if(result.type === "exact" || result.type === "partial") {
+  const raw = $("manualSerial").value;
+  const result = findSerialSmart(raw);
+
+  if(result.type === "empty"){
+    $("result").innerHTML =
+      '<div class="result no"><b>Escribe o escanea una serie.</b></div>';
+    focusInput();
+    return;
+  }
+
+  if(result.type === "exact" || result.type === "partial"){
     const hit = result.matches[0];
     const key = norm(hit.serial);
 
-    if(found.has(key)) {
-      $("manualResult").innerHTML =
-        `<div style="padding:12px;border-radius:12px;background:#fef3c7;border:1px solid #f59e0b">
-          <span class="badge" style="background:#fde68a;color:#92400e">⚠️ DUPLICADA</span>
-          <b style="font-size:17px">${hit.serial}</b>
-          <div class="small">${hit.item || ""} · Esta serie ya había sido verificada.</div>
+    if(found.has(key)){
+      $("result").innerHTML = `
+        <div class="result dup">
+          <span class="badge" style="background:#fef3c7;color:#92400e">⚠️ DUPLICADA</span>
+          <b>${escapeHtml(hit.serial)}</b>
+          <div class="small">${escapeHtml(hit.item)} · Esta serie ya estaba verificada.</div>
         </div>`;
+
       addActivity("DUPLICADA", hit, "Ya estaba verificada");
       renderRecent();
-      focusManual();
+      $("manualSerial").value = "";
+      $("ready").textContent = "Duplicada. Listo para la siguiente serie.";
+      focusInput();
       return;
     }
 
@@ -337,333 +290,289 @@ function verifyManual() {
 
     const method = result.type === "exact"
       ? "Coincidencia exacta"
-      : `Coincidencia por últimos ${result.used} caracteres`;
+      : `Coincidencia parcial · últimos ${result.used} caracteres`;
 
-    $("manualResult").innerHTML =
-      `<div style="padding:12px;border-radius:12px;background:#ecfdf5;border:1px solid #86efac">
+    $("result").innerHTML = `
+      <div class="result ok">
         <span class="badge">✓ VERIFICADA</span>
-        <b style="font-size:17px">${hit.serial}</b>
-        <div class="small">${hit.item || ""} · ${hit.code || ""}</div>
-        <div class="small" style="margin-top:4px">${method}</div>
+        <b>${escapeHtml(hit.serial)}</b>
+        <div class="small">${escapeHtml(hit.item)} · ${escapeHtml(hit.code)}</div>
+        <div class="small">${method}</div>
       </div>`;
 
     addActivity("VERIFICADA", hit, method);
 
-    $("lastResult").style.display = "block";
+    $("last").style.display = "block";
     $("lastSerial").textContent = hit.serial;
-    $("lastProduct").textContent = [hit.item, hit.code].filter(Boolean).join(" · ");
-    $("lastKey").textContent = "Clave: " + key;
+    $("lastProduct").textContent =
+      [hit.item, hit.code].filter(Boolean).join(" · ");
 
-    if(navigator.vibrate) navigator.vibrate(50);
     update();
 
+    if(navigator.vibrate) navigator.vibrate(50);
+
     $("manualSerial").value = "";
-    $("manualReady").textContent = "✓ Serie registrada. Listo para la siguiente.";
-    focusManual();
+    $("ready").textContent = "✓ Registrada. Listo para la siguiente serie.";
+    focusInput();
     return;
   }
 
-  if(result.type === "ambiguous") {
-    $("manualResult").innerHTML =
-      `<div style="padding:12px;border-radius:12px;background:#fffbeb;border:1px solid #f59e0b">
-        <span class="badge" style="background:#fef3c7;color:#92400e">⚠️ VARIAS COINCIDENCIAS</span>
-        <div class="small" style="margin-top:5px">Escribe más caracteres para identificar una sola serie:</div>
-        <div style="margin-top:6px">${result.matches.slice(0,10).map(x =>
-          `<b>${x.serial}</b> · ${x.item || ""}`).join("<br>")}</div>
+  if(result.type === "ambiguous"){
+    const list = result.matches.slice(0,10).map(x =>
+      `<div>${escapeHtml(x.serial)} · ${escapeHtml(x.item)}</div>`
+    ).join("");
+
+    $("result").innerHTML = `
+      <div class="result multi">
+        <span class="badge" style="background:#fef3c7;color:#92400e">
+          ⚠️ VARIAS COINCIDENCIAS
+        </span>
+        <div class="small" style="margin-top:5px">
+          Escribe más caracteres para identificar una sola serie.
+        </div>
+        <div style="margin-top:7px">${list}</div>
       </div>`;
-    $("manualReady").textContent = "Se necesitan más caracteres.";
-    focusManual();
+
+    $("ready").textContent = "Se necesitan más caracteres.";
+    focusInput();
     return;
   }
 
-  $("manualResult").innerHTML =
-    `<div style="padding:12px;border-radius:12px;background:#fef2f2;border:1px solid #fca5a5">
-      <span class="badge" style="background:#fee2e2;color:#991b1b">✕ NO ENCONTRADA</span>
-      <div class="small">La entrada no coincide con ninguna serie del inventario.</div>
+  $("result").innerHTML = `
+    <div class="result no">
+      <span class="badge" style="background:#fee2e2;color:#991b1b">
+        ✕ NO ENCONTRADA
+      </span>
+      <div class="small">
+        La entrada no coincide con ninguna serie del inventario.
+      </div>
     </div>`;
-  $("manualReady").textContent = "No se registró ninguna serie. Listo para intentar otra.";
-  focusManual();
+
+  $("ready").textContent = "No se registró. Listo para intentar otra.";
+  focusInput();
 }
 
-
-$("manualSearch").addEventListener("click", manualSearch);
-$("manualSerial").addEventListener("keydown", e => {
-  if(e.key === "Enter") manualSearch();
-});
-
-
-
-let ocrBusy = false;
-let ocrWorker = null;
-
-function getCameraVideo() {
-  return document.querySelector("#reader video");
-}
-
-function ocrCandidates(text) {
-  const cleaned = String(text || "").toUpperCase();
-  // Keep alphanumeric runs; OCR often returns S/N, labels, or punctuation around the serial.
-  const tokens = cleaned.match(/[A-Z0-9]{6,}/g) || [];
-  const candidates = new Set(tokens);
-
-  // Also generate compacted text, useful when OCR inserts spaces between characters.
-  const compact = norm(cleaned);
-  if(compact.length >= 6) candidates.add(compact);
-
-  // The Excel remains the source of truth. Look for any inventory serial
-  // contained inside the OCR text, including when OCR captures "SN" or labels.
-  const inventoryHits = [];
-  for(const x of inventory) {
-    const s = norm(x.serial);
-    if(s.length >= 6 && compact.includes(s)) inventoryHits.push(x);
-  }
-
-  return { tokens:[...candidates], inventoryHits };
-}
-
-async function ensureOcrWorker() {
-  if(ocrWorker) return ocrWorker;
-  if(!window.Tesseract) throw new Error("No se cargó el motor OCR. Recarga la página.");
-  $("ocrStatus").textContent = "Cargando motor OCR…";
-  ocrWorker = await Tesseract.createWorker("eng");
-  await ocrWorker.setParameters({
-    tessedit_pageseg_mode: "11",
-    preserve_interword_spaces: "1"
-  });
-  return ocrWorker;
-}
-
-async function runOCROnce(silent=false) {
-  const box = $("camera");
-  if(!box) return;
-
-  const video = box.querySelector("video");
-  if(!video || !video.videoWidth || !video.videoHeight) {
-    toast("La cámara no está disponible");
+function renderRecent(){
+  if(!recent.length){
+    $("recent").textContent = "Ninguna todavía.";
     return;
   }
 
-  if(!silent) {
-    $("cameraRead").innerHTML =
-      `<div class="small">OCR</div><b>Analizando imagen...</b>`;
-  }
+  $("recent").innerHTML = recent.map(x => {
+    const duplicate = x.status === "DUPLICADA";
+    return `
+      <div class="listrow">
+        <span class="badge"
+          style="${duplicate ? 'background:#fef3c7;color:#92400e' : ''}">
+          ${duplicate ? '⚠️ DUPLICADA' : '✓ VERIFICADA'}
+        </span>
+        <b>${escapeHtml(x.serial)}</b>
+        <div class="small">${escapeHtml(x.item)} · ${escapeHtml(x.detail)}</div>
+      </div>`;
+  }).join("");
+}
 
-  // Capture the full camera image instead of the previous narrow crop.
-  const canvas = document.createElement("canvas");
-  const scale = 2;
-  canvas.width = video.videoWidth * scale;
-  canvas.height = video.videoHeight * scale;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-  const variants = [];
-
-  // Original.
-  variants.push(canvas);
-
-  // Grayscale + contrast.
-  const gray = document.createElement("canvas");
-  gray.width = canvas.width;
-  gray.height = canvas.height;
-  const g = gray.getContext("2d");
-  g.drawImage(canvas, 0, 0);
-  const img = g.getImageData(0, 0, gray.width, gray.height);
-  for(let i=0;i<img.data.length;i+=4) {
-    const y = 0.299*img.data[i] + 0.587*img.data[i+1] + 0.114*img.data[i+2];
-    const c = Math.max(0, Math.min(255, (y - 128) * 1.65 + 128));
-    img.data[i] = img.data[i+1] = img.data[i+2] = c;
-  }
-  g.putImageData(img, 0, 0);
-  variants.push(gray);
-
-  let combined = "";
-  for(const v of variants) {
-    try {
-      const { data:{ text:ocrText="" } } = await Tesseract.recognize(
-        v,
-        "eng",
-        { logger: m => {} }
-      );
-      combined += "\n" + ocrText;
-    } catch(e) {}
-  }
-
-  const cleaned = combined.replace(/\s+/g, " ").trim();
-
-  // First: exact inventory series appearing anywhere in OCR text.
-  let exactHit = null;
-  for(const row of inventory) {
-    const s = norm(row.serial);
-    if(s && cleaned.toUpperCase().includes(s.toUpperCase())) {
-      exactHit = row;
-      break;
-    }
-  }
-
-  if(exactHit) {
-    $("cameraRead").innerHTML =
-      `<div class="small">OCR DETECTADO</div>
-       <div style="font-size:18px;font-weight:800;word-break:break-all">${cleaned}</div>
-       <div style="margin-top:8px"><span class="badge">✓ OCR — ENCONTRADA</span>
-       <b>${exactHit.serial}</b><br>${exactHit.item || ""}</div>`;
-    processCode(exactHit.serial);
+function renderMissing(){
+  if(!inventory.length){
+    $("missingList").textContent = "Las series no verificadas aparecerán aquí.";
     return;
   }
 
-  // Second: tokenize OCR and use the same smart matching algorithm.
-  const tokens = cleaned
-    .toUpperCase()
-    .split(/[^A-Z0-9]+/)
-    .filter(x => x.length >= 6);
+  const missing = inventory.filter(x => !found.has(norm(x.serial)));
 
-  let partialHit = null;
-  let partialInfo = null;
-
-  for(const token of tokens) {
-    const r = findSerialSmart(token);
-    if(r.matches.length === 1) {
-      partialHit = r.matches[0];
-      partialInfo = r;
-      break;
-    }
+  if(!missing.length){
+    $("missingList").innerHTML =
+      '<span class="badge">✓ INVENTARIO COMPLETO</span>';
+    return;
   }
 
-  $("cameraRead").innerHTML =
-    `<div class="small">OCR DETECTADO</div>
-     <div style="font-size:18px;font-weight:800;word-break:break-word">${cleaned || "Sin texto detectable"}</div>` +
-    (partialHit
-      ? `<div style="margin-top:8px"><span class="badge">✓ OCR — COINCIDENCIA</span>
-         <b>${partialHit.serial}</b><br>${partialHit.item || ""}
-         <div class="small">Coincidencia parcial usando ${partialInfo.used || "6+"} caracteres.</div></div>`
-      : `<div style="margin-top:8px"><span class="badge" style="background:#fee2e2;color:#991b1b">SIN COINCIDENCIA</span>
-         <div class="small">El texto detectado no identifica una sola serie del inventario.</div></div>`
-    );
-
-  if(partialHit) processCode(partialHit.serial);
-  if(silent && $("ocrStatus")) {
-    $("ocrStatus").textContent =
-      "OCR automático activo · última lectura: " +
-      new Date().toLocaleTimeString();
-  }
+  $("missingList").innerHTML = missing.map(x => `
+    <div class="listrow">
+      <b>${escapeHtml(x.serial)}</b>
+      <div class="small">${escapeHtml(x.item)} · ${escapeHtml(x.code)}</div>
+    </div>
+  `).join("");
 }
 
+function escapeHtml(value){
+  return String(value ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
 
-function resetAll() {
-  found.clear(); recent=[]; lastCode=""; lastTime=0; visibleCode=""; visibleCodeLastSeen=0;
-  $("lastResult").style.display="none";
-  $("manualSerial").value="";
-  $("manualResult").innerHTML="";
-  $("manualReady").textContent="Campo listo para recibir la siguiente serie.";
+function resetAll(){
+  found.clear();
+  recent = [];
+  $("last").style.display = "none";
+  $("result").innerHTML = "";
+  $("manualSerial").value = "";
+  $("ready").textContent = inventory.length
+    ? "Inventario conservado. Listo para comenzar de nuevo."
+    : "Carga el Excel para comenzar.";
   update();
-  focusManual();
+  focusInput();
 }
 
-function csvEscape(v) {
-  return '"' + String(v??"").replaceAll('"','""') + '"';
-}
-function exportCSV() {
-  if(!inventory.length) { toast("No hay inventario"); return; }
-  const rows=[["Serie","Producto","ItemCode","Bodega","Estado","Escaneada"]];
-  for(const x of inventory) {
-    const s=norm(x.serial), yes=found.has(s);
-    rows.push([x.serial,x.item,x.code,x.warehouse,yes?"ENCONTRADA":"FALTANTE",yes?"SI":"NO"]);
-  }
-  for(const r of []) {
-    rows.push([r.code,"","","","NO PERTENECE AL INVENTARIO","SI"]);
-  }
-  const csv="\ufeff"+rows.map(r=>r.map(csvEscape).join(",")).join("\n");
-  const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
-  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
-  a.download="Inventario_Verificacion.csv"; a.click(); URL.revokeObjectURL(a.href);
+function csvEscape(value){
+  return '"' + String(value ?? "").replaceAll('"','""') + '"';
 }
 
-$("reset").onclick=resetAll;
-$("export").onclick=exportCSV;
-$("manualSearch").onclick=verifyManual;
-$("manualClear").onclick=()=>{ $("manualSerial").value=""; $("manualResult").innerHTML=""; $("manualReady").textContent="Campo listo para recibir la siguiente serie."; focusManual(); };
-$("manualSerial").addEventListener("keydown", e => {
-  if(e.key === "Enter") {
-    e.preventDefault();
-    verifyManual();
+function exportCSV(){
+  if(!inventory.length){
+    toast("No hay inventario cargado.");
+    return;
   }
-});
 
-async function ensureXLSX() {
-  if(window.XLSX) return true;
+  const rows = [[
+    "Serie","Producto","ItemCode","Bodega","Estado"
+  ]];
 
-  const urls = [
-    "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js",
-    "https://cdn.jsdelivr.net/npm/xlsx@0.20.3/dist/xlsx.full.min.js",
-    "https://unpkg.com/xlsx@0.20.3/dist/xlsx.full.min.js"
-  ];
-
-  for(const url of urls) {
-    try {
-      await new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = url;
-        s.onload = resolve;
-        s.onerror = reject;
-        document.head.appendChild(s);
-      });
-      if(window.XLSX) return true;
-    } catch(e) {}
+  for(const x of inventory){
+    const verified = found.has(norm(x.serial));
+    rows.push([
+      x.serial,
+      x.item,
+      x.code,
+      x.warehouse,
+      verified ? "VERIFICADA" : "RESTANTE"
+    ]);
   }
-  return false;
+
+  const csv = "\ufeff" + rows
+    .map(row => row.map(csvEscape).join(","))
+    .join("\n");
+
+  const blob = new Blob([csv], {
+    type:"text/csv;charset=utf-8"
+  });
+
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "Inventario_Verificacion.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
-$("file").onchange = async e => {
-  const file = e.target.files?.[0];
+$("file").addEventListener("change", async event => {
+  const file = event.target.files?.[0];
   if(!file) return;
 
   $("source").textContent = `Leyendo ${file.name}…`;
+  $("ready").textContent = "Procesando Excel…";
 
-  try {
-    const ready = await ensureXLSX();
-    if(!ready) throw new Error("No se pudo cargar el lector de Excel. Verifica tu conexión a Internet.");
-
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, {type:"array", cellDates:false});
-    if(!wb.SheetNames.length) throw new Error("El archivo no contiene hojas.");
-
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const data = XLSX.utils.sheet_to_json(ws, {defval:"", raw:false});
-    if(!data.length) throw new Error("La primera hoja está vacía.");
-
-    const keys = Object.keys(data[0] || {});
-    const serialKey = keys.find(k => String(k).trim().toLowerCase().replace(/\s+/g,"") === "noserie");
-    if(!serialKey) {
-      throw new Error(`No se encontró la columna NoSerie. Columnas detectadas: ${keys.join(", ")}`);
+  try{
+    if(!window.XLSX){
+      throw new Error(
+        "No se pudo cargar el lector de Excel. Comprueba que GitHub Pages tenga conexión a Internet."
+      );
     }
 
-    const itemKey = keys.find(k => String(k).trim().toLowerCase().replace(/\s+/g,"") === "itemname");
-    const codeKey = keys.find(k => String(k).trim().toLowerCase().replace(/\s+/g,"") === "itemcode");
-    const whKey = keys.find(k => String(k).trim().toLowerCase().replace(/\s+/g,"") === "nombodega");
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, {
+      type:"array",
+      cellDates:false,
+      raw:false
+    });
 
-    const rows = data
-      .map(r => ({
-        serial: String(r[serialKey] ?? "").trim(),
-        item: itemKey ? String(r[itemKey] ?? "").trim() : "",
-        code: codeKey ? String(r[codeKey] ?? "").trim() : "",
-        warehouse: whKey ? String(r[whKey] ?? "").trim() : ""
-      }))
-      .filter(r => norm(r.serial));
+    if(!workbook.SheetNames.length){
+      throw new Error("El archivo no contiene hojas.");
+    }
 
-    if(!rows.length) throw new Error("La columna NoSerie no contiene series válidas.");
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(sheet, {
+      defval:"",
+      raw:false
+    });
+
+    if(!data.length){
+      throw new Error("La primera hoja está vacía.");
+    }
+
+    const keys = Object.keys(data[0]);
+
+    const normalizeHeader = k =>
+      String(k).trim().toLowerCase().replace(/\s+/g,"");
+
+    const serialKey = keys.find(k =>
+      normalizeHeader(k) === "noserie"
+    );
+
+    if(!serialKey){
+      throw new Error(
+        "No encontré la columna NoSerie. Columnas detectadas: " +
+        keys.join(", ")
+      );
+    }
+
+    const itemKey = keys.find(k =>
+      normalizeHeader(k) === "itemname"
+    );
+
+    const codeKey = keys.find(k =>
+      normalizeHeader(k) === "itemcode"
+    );
+
+    const warehouseKey = keys.find(k =>
+      normalizeHeader(k) === "nombodega"
+    );
+
+    const rows = data.map(row => ({
+      serial:String(row[serialKey] ?? "").trim(),
+      item:itemKey ? String(row[itemKey] ?? "").trim() : "",
+      code:codeKey ? String(row[codeKey] ?? "").trim() : "",
+      warehouse:warehouseKey ? String(row[warehouseKey] ?? "").trim() : ""
+    })).filter(row => norm(row.serial));
+
+    if(!rows.length){
+      throw new Error("No encontré series válidas en NoSerie.");
+    }
 
     setInventory(rows, file.name);
-    $("source").textContent = `✓ ${file.name} · ${inventory.length} series cargadas`;
-    toast(`Excel cargado: ${inventory.length} series`);
-    focusManual();
-  } catch(err) {
-    console.error(err);
-    $("source").textContent = `✕ Error al cargar ${file.name}`;
-    toast("Excel: " + err.message);
-  } finally {
-    e.target.value = "";
+
+  }catch(error){
+    console.error(error);
+
+    $("source").textContent = `✕ No se pudo cargar ${file.name}`;
+    $("ready").textContent = "Revisa el mensaje de error.";
+
+    $("result").innerHTML = `
+      <div class="result no">
+        <b>Error al cargar el Excel</b>
+        <div class="small">${escapeHtml(error.message)}</div>
+      </div>`;
+
+    toast("Error: " + error.message);
+
+  }finally{
+    event.target.value = "";
   }
-};
-setInventory(EMBEDDED,"Inventario integrado de prueba");
+});
+
+$("verify").addEventListener("click", verify);
+
+$("manualSerial").addEventListener("keydown", event => {
+  if(event.key === "Enter"){
+    event.preventDefault();
+    verify();
+  }
+});
+
+$("clear").addEventListener("click", () => {
+  $("manualSerial").value = "";
+  $("result").innerHTML = "";
+  $("ready").textContent = inventory.length
+    ? "Campo listo para la siguiente serie."
+    : "Carga el Excel para comenzar.";
+  focusInput();
+});
+
+$("reset").addEventListener("click", resetAll);
+$("export").addEventListener("click", exportCSV);
+
+update();
 </script>
 </body>
 </html>
