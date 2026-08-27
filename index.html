@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#111827">
-<title>Verificación de Inventario</title>
+<title>Verificación de Inventario v1.12</title>
 
 <!-- ÚNICA dependencia externa: lectura de Excel -->
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
@@ -93,7 +93,7 @@ input[type=text]:focus{border-color:#111827}
     placeholder="Escribe o escanea una serie">
 
   <div class="row" style="margin-top:8px">
-    <button id="verify">✓ Verificar</button>
+    <button id="verify">🔎 Buscar</button>
     <button id="clear" class="secondary">Limpiar</button>
   </div>
 
@@ -194,7 +194,7 @@ function update(){
   $("bar").style.width = (expected ? verified / expected * 100 : 0) + "%";
 
   $("status").textContent = expected
-    ? `${verified} de ${expected} verificadas · ${missing} restantes`
+    ? `${verified} de ${expected} verificadas · ${missing} restantes · ${(expected ? verified/expected*100 : 0).toFixed(1)}%`
     : "Carga un inventario para comenzar.";
 
   renderRecent();
@@ -423,10 +423,27 @@ function renderRecent(){
           ${duplicate ? '⚠️ DUPLICADA' : '✓ VERIFICADA'}
         </span>
         <b>${escapeHtml(x.serial)}</b>
+        <button class="secondary actionBtn" data-revert="${escapeHtml(x.serial)}">↩ Revertir</button>
         <div class="small">${escapeHtml(x.item)} · ${escapeHtml(x.detail)}</div>
       </div>`;
   }).join("");
 }
+
+function revertSerial(serial){
+  const key = norm(serial);
+  if(!found.has(key)) return;
+  found.delete(key);
+  recent = recent.filter(x => !(x.status === "VERIFICADA" && norm(x.serial) === key));
+  $("result").innerHTML = "";
+  $("ready").textContent = "↩ Verificación revertida. La serie vuelve a estar pendiente.";
+  update();
+  focusInput();
+  toast("Verificación revertida.");
+}
+document.addEventListener("click", event => {
+  const btn = event.target.closest("[data-revert]");
+  if(btn) revertSerial(btn.dataset.revert);
+});
 
 function renderMissing(){
   if(!inventory.length){
@@ -460,14 +477,14 @@ function escapeHtml(value){
 }
 
 function resetAll(){
+  if(!inventory.length) return;
+  if(!confirm("¿Reiniciar las verificaciones de este inventario? Se borrará el progreso actual.")) return;
   found.clear();
   recent = [];
   $("last").style.display = "none";
   $("result").innerHTML = "";
   $("manualSerial").value = "";
-  $("ready").textContent = inventory.length
-    ? "Inventario conservado. Listo para comenzar de nuevo."
-    : "Carga el Excel para comenzar.";
+  $("ready").textContent = "Inventario conservado. Listo para comenzar de nuevo.";
   update();
   focusInput();
 }
@@ -477,37 +494,23 @@ function csvEscape(value){
 }
 
 function exportCSV(){
-  if(!inventory.length){
-    toast("No hay inventario cargado.");
-    return;
-  }
-
-  const rows = [[
-    "Serie","Producto","ItemCode","Bodega","Estado"
-  ]];
-
+  if(!inventory.length){ toast("No hay inventario cargado."); return; }
+  const total = inventory.length, verified = found.size, missing = total - verified;
+  const rows = [
+    ["RESUMEN","","",""],
+    ["TOTAL",total,"VERIFICADOS",verified],
+    ["FALTANTES",missing,"PROGRESO",`${(verified/total*100).toFixed(1)}%`],
+    [],
+    ["SKU","DESCRIPCION","SERIE","ESTADO"]
+  ];
   for(const x of inventory){
-    const verified = found.has(norm(x.serial));
-    rows.push([
-      x.serial,
-      x.item,
-      x.code,
-      x.warehouse,
-      verified ? "VERIFICADA" : "RESTANTE"
-    ]);
+    rows.push([x.code,x.item,x.serial,found.has(norm(x.serial)) ? "VERIFICADO" : "FALTANTE"]);
   }
-
-  const csv = "\ufeff" + rows
-    .map(row => row.map(csvEscape).join(","))
-    .join("\n");
-
-  const blob = new Blob([csv], {
-    type:"text/csv;charset=utf-8"
-  });
-
+  const csv = "\ufeff" + rows.map(r => r.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([csv],{type:"text/csv;charset=utf-8"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "Inventario_Verificacion.csv";
+  a.download = "Inventario_Resultados.csv";
   a.click();
   URL.revokeObjectURL(a.href);
 }
