@@ -440,27 +440,56 @@ document.addEventListener("click", event => {
 });
 
 function renderMissing(){
-  if(!inventory.length){
-    $("missingList").textContent = "Las series no verificadas aparecerán aquí.";
+  const box = $("missing");
+  if(!box || !inventory.length){ if(box) box.innerHTML=""; return; }
+
+  let search = $("missingSearch");
+  if(!search){
+    search = document.createElement("input");
+    search.id = "missingSearch";
+    search.placeholder = "Filtrar faltantes por SKU, descripción o serie…";
+    search.style.marginBottom = "10px";
+    box.parentNode.insertBefore(search, box);
+    search.addEventListener("input", renderMissing);
+  }
+
+  const q = norm(search.value || "");
+  const rows = inventory.filter(x => {
+    if(found.has(norm(x.serial))) return false;
+    if(!q) return true;
+    return [x.code, x.item, x.serial].some(v => norm(v).includes(q));
+  });
+
+  const totalMissing = inventory.length - found.size;
+  const label = q ? `${rows.length} de ${totalMissing} faltantes` : `${totalMissing} faltantes`;
+
+  if(!rows.length){
+    box.innerHTML = `<div class="small">${escapeHtml(label)}.</div>`;
     return;
   }
 
-  const missing = inventory.filter(x => !found.has(norm(x.serial)));
-
-  if(!missing.length){
-    $("missingList").innerHTML =
-      '<span class="badge">✓ INVENTARIO COMPLETO</span>';
-    return;
-  }
-
-  $("missingList").innerHTML = missing.map(x => `
-    <div class="listrow">
-      <b>${escapeHtml(x.serial)}</b>
-      <div class="small">${escapeHtml(x.item)} · ${escapeHtml(x.code)}</div>
-    </div>
-  `).join("");
+  box.innerHTML = `
+    <div class="small" style="margin-bottom:8px">${escapeHtml(label)}</div>
+    <div style="overflow:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:8px;border-bottom:1px solid #ddd">SKU</th>
+            <th style="text-align:left;padding:8px;border-bottom:1px solid #ddd">DESCRIPCIÓN</th>
+            <th style="text-align:left;padding:8px;border-bottom:1px solid #ddd">SERIE</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(x => `
+            <tr>
+              <td style="padding:8px;border-bottom:1px solid #eee">${escapeHtml(x.code)}</td>
+              <td style="padding:8px;border-bottom:1px solid #eee">${escapeHtml(x.item)}</td>
+              <td style="padding:8px;border-bottom:1px solid #eee">${escapeHtml(x.serial)}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>`;
 }
-
 function escapeHtml(value){
   return String(value ?? "")
     .replaceAll("&","&amp;")
@@ -746,5 +775,68 @@ $("export").addEventListener("click", exportXLSX);
 
 update();
 </script>
+
+<script>
+(function(){
+  const KEY = "inventario_verificacion_v1_14";
+  function saveInventorySession(){
+    try{
+      if(!window.inventory || !inventory.length) return;
+      localStorage.setItem(KEY, JSON.stringify({
+        inventory, verified:[...found.keys()], recent,
+        source: $("source") ? $("source").textContent : "",
+        savedAt: new Date().toISOString()
+      }));
+    }catch(e){}
+  }
+  function restoreInventorySession(){
+    try{
+      const raw = localStorage.getItem(KEY);
+      if(!raw) return;
+      const s = JSON.parse(raw);
+      if(!s.inventory || !s.inventory.length) return;
+      const ok = confirm(
+        "Se encontró un inventario guardado.\n\n" +
+        `${s.verified?.length || 0} de ${s.inventory.length} series estaban verificadas.\n\n` +
+        "¿Deseas continuar con este inventario?"
+      );
+      if(!ok) return;
+      inventory = s.inventory;
+      found.clear();
+      (s.verified || []).forEach(k => {
+        const item = inventory.find(x => norm(x.serial) === k);
+        if(item) found.set(k, item);
+      });
+      recent = Array.isArray(s.recent) ? s.recent : [];
+      if($("source")) $("source").textContent = s.source || `${inventory.length} series cargadas`;
+      if($("ready")) $("ready").textContent = `Sesión recuperada: ${found.size} de ${inventory.length} verificadas.`;
+      if(typeof update === "function") update();
+    }catch(e){}
+  }
+  window.addEventListener("beforeunload", function(e){
+    if(window.inventory && inventory.length && found.size > 0 && found.size < inventory.length){
+      saveInventorySession();
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
+  window.__saveInventorySession = saveInventorySession;
+  window.__restoreInventorySession = restoreInventorySession;
+  window.addEventListener("load", function(){ setTimeout(restoreInventorySession, 250); });
+})();
+</script>
+
+<script>
+(function(){
+  const originalUpdate = window.update;
+  if(typeof originalUpdate !== "function") return;
+  window.update = function(){
+    const result = originalUpdate.apply(this, arguments);
+    if(window.__saveInventorySession) window.__saveInventorySession();
+    return result;
+  };
+})();
+</script>
+
 </body>
 </html>
