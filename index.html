@@ -4,10 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#111827">
-<title>Verificación de Inventario v1.13</title>
+<title>Verificación de Inventario v1.12</title>
 
 <!-- ÚNICA dependencia externa: lectura de Excel -->
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js">
+document.addEventListener("input", event => {
+  if(event.target && event.target.id === "missingSearch") renderMissing();
+});
+
+</script>
 
 <style>
 :root{
@@ -137,6 +142,9 @@ input[type=text]:focus{border-color:#111827}
 
 <div class="card">
   <h3 style="margin-top:0">Series restantes</h3>
+  <input id="missingSearch" type="text"
+    placeholder="Buscar en faltantes…"
+    style="width:100%;box-sizing:border-box;margin:8px 0 10px;padding:9px 10px">
   <div id="missingList" class="small">Las series no verificadas aparecerán aquí.</div>
 </div>
 
@@ -206,27 +214,44 @@ function findSerialSmart(raw){
 
   if(!input) return {type:"empty",matches:[]};
 
-  // La búsqueda ahora funciona como un filtro de texto:
-  // los caracteres introducidos pueden aparecer al inicio, en medio o al final.
-  // Se ignoran mayúsculas/minúsculas y separadores porque norm() los elimina.
-  const matches = inventory.filter(x => norm(x.serial).includes(input));
-
-  if(matches.length === 0){
-    return {type:"none",matches:[]};
-  }
-
-  // Una serie completa y única se puede identificar directamente.
-  const exact = matches.filter(x => norm(x.serial) === input);
+  // Exact full-series match always wins.
+  const exact = inventory.filter(x => norm(x.serial) === input);
   if(exact.length === 1){
     return {type:"exact",matches:exact,used:input.length};
   }
 
-  if(matches.length === 1){
-    return {type:"unique",matches,used:input.length};
+  // Progressive right-to-left search:
+  // 1 char, then 2, then 3... until the suffix identifies ONE series.
+  // The moment there is exactly one candidate, return it for confirmation.
+  for(let n=1; n<=input.length; n++){
+    const suffix = input.slice(-n);
+    const matches = inventory.filter(x => norm(x.serial).endsWith(suffix));
+
+    if(matches.length === 1){
+      return {
+        type:"unique",
+        matches,
+        used:n,
+        suffix
+      };
+    }
+
+    if(matches.length === 0 && n === input.length){
+      break;
+    }
   }
 
-  return {type:"ambiguous",matches,used:input.length};
+  // If the complete input is still shared by multiple series, show them.
+  const fullPartial = inventory.filter(x =>
+    norm(x.serial).endsWith(input)
+  );
+
+  return {
+    type: fullPartial.length ? "ambiguous" : "none",
+    matches: fullPartial
+  };
 }
+
 
 function addActivity(status, hit, detail){
   recent.unshift({
@@ -295,7 +320,7 @@ function verify(){
         </div>
         <div class="small" style="margin-top:3px">
           ${escapeHtml(hit.code || "")}
-          · Coincidencia en cualquier parte de la serie usando ${result.used} caracteres
+          · Coincidencia usando los últimos ${result.used} caracteres: <b>${escapeHtml(result.suffix)}</b>
         </div>
         <button id="confirmHit" style="margin-top:12px;width:100%">
           ✓ VERIFICAR ESTA SERIE
@@ -311,34 +336,23 @@ function verify(){
   }
 
   if(result.type === "ambiguous"){
-    const list = result.matches.map((x, i) => `
-      <div class="listrow" style="padding:10px 0">
-        <div style="font-weight:800;word-break:break-all">${escapeHtml(x.serial)}</div>
-        <div class="small">${escapeHtml(x.item || "Producto sin descripción")} · ${escapeHtml(x.code || "")}</div>
-        <button class="secondary" style="margin-top:7px;width:100%" data-choose-index="${i}">
-          ✓ Verificar esta serie
-        </button>
-      </div>`).join("");
+    const list = result.matches.slice(0,12).map(x =>
+      `<div>${escapeHtml(x.serial)} · ${escapeHtml(x.item)}</div>`
+    ).join("");
 
     $("result").innerHTML = `
       <div class="result multi">
         <span class="badge" style="background:#fef3c7;color:#92400e">
-          🔎 ${result.matches.length} COINCIDENCIAS
+          ⚠️ VARIAS COINCIDENCIAS
         </span>
         <div class="small" style="margin-top:5px">
-          La búsqueda filtra por cualquier parte de la serie. Puedes seguir escribiendo para reducir los resultados.
+          Escribe más caracteres para reducirlo a una sola serie.
         </div>
         <div style="margin-top:7px">${list}</div>
       </div>`;
 
-    $("result").querySelectorAll("[data-choose-index]").forEach(btn => {
-      btn.onclick = () => {
-        const hit = result.matches[Number(btn.dataset.chooseIndex)];
-        verifyHit(hit, `Confirmada por el usuario · ${result.used} caracteres de búsqueda`);
-      };
-    });
-
-    $("ready").textContent = `${result.matches.length} coincidencias. Selecciona el producto correcto.`;
+    $("ready").textContent = "Todavía hay varias posibles series.";
+    focusInput();
     return;
   }
 
@@ -440,55 +454,34 @@ document.addEventListener("click", event => {
 });
 
 function renderMissing(){
-  const box = $("missing");
-  if(!box || !inventory.length){ if(box) box.innerHTML=""; return; }
+  const list = $("missingList");
+  if(!list) return;
 
-  let search = $("missingSearch");
-  if(!search){
-    search = document.createElement("input");
-    search.id = "missingSearch";
-    search.placeholder = "Filtrar faltantes por SKU, descripción o serie…";
-    search.style.marginBottom = "10px";
-    box.parentNode.insertBefore(search, box);
-    search.addEventListener("input", renderMissing);
+  if(!inventory.length){
+    list.textContent = "Las series no verificadas aparecerán aquí.";
+    return;
   }
 
-  const q = norm(search.value || "");
-  const rows = inventory.filter(x => {
+  const q = norm($("missingSearch")?.value || "");
+  const missing = inventory.filter(x => {
     if(found.has(norm(x.serial))) return false;
     if(!q) return true;
     return [x.code, x.item, x.serial].some(v => norm(v).includes(q));
   });
 
-  const totalMissing = inventory.length - found.size;
-  const label = q ? `${rows.length} de ${totalMissing} faltantes` : `${totalMissing} faltantes`;
-
-  if(!rows.length){
-    box.innerHTML = `<div class="small">${escapeHtml(label)}.</div>`;
+  if(!missing.length){
+    list.innerHTML = q
+      ? '<span class="small">No hay faltantes que coincidan con la búsqueda.</span>'
+      : '<span class="badge">✓ INVENTARIO COMPLETO</span>';
     return;
   }
 
-  box.innerHTML = `
-    <div class="small" style="margin-bottom:8px">${escapeHtml(label)}</div>
-    <div style="overflow:auto">
-      <table style="width:100%;border-collapse:collapse;font-size:12px">
-        <thead>
-          <tr>
-            <th style="text-align:left;padding:8px;border-bottom:1px solid #ddd">SKU</th>
-            <th style="text-align:left;padding:8px;border-bottom:1px solid #ddd">DESCRIPCIÓN</th>
-            <th style="text-align:left;padding:8px;border-bottom:1px solid #ddd">SERIE</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.map(x => `
-            <tr>
-              <td style="padding:8px;border-bottom:1px solid #eee">${escapeHtml(x.code)}</td>
-              <td style="padding:8px;border-bottom:1px solid #eee">${escapeHtml(x.item)}</td>
-              <td style="padding:8px;border-bottom:1px solid #eee">${escapeHtml(x.serial)}</td>
-            </tr>`).join("")}
-        </tbody>
-      </table>
-    </div>`;
+  list.innerHTML = missing.map(x => `
+    <div class="listrow">
+      <b>${escapeHtml(x.serial)}</b>
+      <div class="small">${escapeHtml(x.item)} · ${escapeHtml(x.code)}</div>
+    </div>
+  `).join("");
 }
 function escapeHtml(value){
   return String(value ?? "")
@@ -512,84 +505,30 @@ function resetAll(){
   focusInput();
 }
 
-function exportXLSX(){
-  if(!inventory.length){
-    toast("No hay inventario cargado.");
-    return;
-  }
+function csvEscape(value){
+  return '"' + String(value ?? "").replaceAll('"','""') + '"';
+}
 
-  if(!window.XLSX){
-    toast("No está disponible el exportador de Excel.");
-    return;
-  }
-
-  const total = inventory.length;
-  const verified = found.size;
-  const missing = total - verified;
-  const progress = `${(verified / total * 100).toFixed(1)}%`;
-
-  // Hoja 1: resumen independiente y tabla principal ordenada.
-  const summary = [
-    ["RESUMEN", "VALOR"],
-    ["TOTAL", total],
-    ["VERIFICADOS", verified],
-    ["FALTANTES", missing],
-    ["PROGRESO", progress],
+function exportCSV(){
+  if(!inventory.length){ toast("No hay inventario cargado."); return; }
+  const total = inventory.length, verified = found.size, missing = total - verified;
+  const rows = [
+    ["RESUMEN","","",""],
+    ["TOTAL",total,"VERIFICADOS",verified],
+    ["FALTANTES",missing,"PROGRESO",`${(verified/total*100).toFixed(1)}%`],
     [],
-    ["SKU", "DESCRIPCION", "SERIE", "ESTADO"]
-  ];
-
-  for(const x of inventory){
-    summary.push([
-      x.code || "",
-      x.item || "",
-      x.serial || "",
-      found.has(norm(x.serial)) ? "VERIFICADO" : "FALTANTE"
-    ]);
-  }
-
-  const ws = XLSX.utils.aoa_to_sheet(summary);
-
-  // Anchos para que el resultado sea legible al abrirlo en Excel.
-  ws["!cols"] = [
-    {wch:18},
-    {wch:55},
-    {wch:28},
-    {wch:14}
-  ];
-
-  // Autofiltro sobre la tabla de resultados.
-  const headerRow = 7;
-  ws["!autofilter"] = {
-    ref: `A${headerRow}:D${summary.length}`
-  };
-
-  // Congelar las filas del resumen y encabezado de la tabla.
-  ws["!freeze"] = {xSplit:0, ySplit:headerRow};
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Resultados");
-
-  // Segunda hoja con solo las verificadas, útil para revisión rápida.
-  const verifiedRows = [
-    ["SKU", "DESCRIPCION", "SERIE", "ESTADO"]
+    ["SKU","DESCRIPCION","SERIE","ESTADO"]
   ];
   for(const x of inventory){
-    if(found.has(norm(x.serial))){
-      verifiedRows.push([x.code || "", x.item || "", x.serial || "", "VERIFICADO"]);
-    }
+    rows.push([x.code,x.item,x.serial,found.has(norm(x.serial)) ? "VERIFICADO" : "FALTANTE"]);
   }
-  const wsVerified = XLSX.utils.aoa_to_sheet(verifiedRows);
-  wsVerified["!cols"] = [
-    {wch:18}, {wch:55}, {wch:28}, {wch:14}
-  ];
-  if(verifiedRows.length > 1){
-    wsVerified["!autofilter"] = {ref:`A1:D${verifiedRows.length}`};
-  }
-  XLSX.utils.book_append_sheet(wb, wsVerified, "Verificados");
-
-  XLSX.writeFile(wb, "Inventario_Resultados.xlsx");
-  toast("Excel de resultados generado.");
+  const csv = "\ufeff" + rows.map(r => r.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([csv],{type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "Inventario_Resultados.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 $("file").addEventListener("change", async event => {
@@ -689,71 +628,6 @@ $("file").addEventListener("change", async event => {
 
 $("verify").addEventListener("click", verify);
 
-$("manualSerial").addEventListener("input", () => {
-  if(!inventory.length) return;
-  const value = $("manualSerial").value;
-  if(!norm(value)){
-    $("result").innerHTML = "";
-    $("ready").textContent = "Campo listo para buscar.";
-    return;
-  }
-  showSearchResults(value);
-});
-
-function showSearchResults(raw){
-  const result = findSerialSmart(raw);
-  if(result.type === "empty") return;
-
-  if(result.type === "none"){
-    $("result").innerHTML = `
-      <div class="result no">
-        <span class="badge" style="background:#fee2e2;color:#991b1b">✕ 0 COINCIDENCIAS</span>
-        <div class="small">No hay series que contengan “${escapeHtml(norm(raw))}”.</div>
-      </div>`;
-    $("ready").textContent = "Sin coincidencias.";
-    return;
-  }
-
-  if(result.type === "exact" || result.type === "unique"){
-    const hit = result.matches[0];
-    const key = norm(hit.serial);
-    const already = found.has(key);
-    $("result").innerHTML = `
-      <div class="result ${already ? "dup" : "multi"}">
-        <span class="badge" style="${already ? "background:#fef3c7;color:#92400e" : "background:#dbeafe;color:#1d4ed8"}">
-          ${already ? "⚠️ YA VERIFICADA" : "🔎 1 COINCIDENCIA"}
-        </span>
-        <div style="font-size:20px;font-weight:900;margin-top:8px;word-break:break-all">${escapeHtml(hit.serial)}</div>
-        <div style="font-weight:700;margin-top:3px">${escapeHtml(hit.item || "Producto sin descripción")}</div>
-        <div class="small" style="margin-top:3px">${escapeHtml(hit.code || "")} · Coincidencia en cualquier parte de la serie</div>
-        ${already ? "" : '<button id="confirmHitLive" style="margin-top:12px;width:100%">✓ VERIFICAR ESTA SERIE</button>'}
-      </div>`;
-    if(!already){
-      $("confirmHitLive").onclick = () => verifyHit(hit, `Confirmada por el usuario · ${result.used} caracteres de búsqueda`);
-    }
-    $("ready").textContent = already ? "Esta serie ya fue verificada." : "Revisa físicamente el producto y confirma si corresponde.";
-    return;
-  }
-
-  // Multiple matches: reuse the same result renderer as the Search button.
-  const list = result.matches.map((x, i) => `
-    <div class="listrow" style="padding:10px 0">
-      <div style="font-weight:800;word-break:break-all">${escapeHtml(x.serial)}</div>
-      <div class="small">${escapeHtml(x.item || "Producto sin descripción")} · ${escapeHtml(x.code || "")}</div>
-      <button class="secondary" style="margin-top:7px;width:100%" data-choose-live="${i}">✓ Verificar esta serie</button>
-    </div>`).join("");
-  $("result").innerHTML = `
-    <div class="result multi">
-      <span class="badge" style="background:#fef3c7;color:#92400e">🔎 ${result.matches.length} COINCIDENCIAS</span>
-      <div class="small" style="margin-top:5px">La lista se actualiza mientras escribes. Puedes seguir agregando caracteres.</div>
-      <div style="margin-top:7px">${list}</div>
-    </div>`;
-  $("result").querySelectorAll("[data-choose-live]").forEach(btn => {
-    btn.onclick = () => verifyHit(result.matches[Number(btn.dataset.chooseLive)], `Confirmada por el usuario · ${result.used} caracteres de búsqueda`);
-  });
-  $("ready").textContent = `${result.matches.length} coincidencias. Selecciona el producto correcto.`;
-}
-
 $("manualSerial").addEventListener("keydown", event => {
   if(event.key === "Enter"){
     event.preventDefault();
@@ -771,72 +645,9 @@ $("clear").addEventListener("click", () => {
 });
 
 $("reset").addEventListener("click", resetAll);
-$("export").addEventListener("click", exportXLSX);
+$("export").addEventListener("click", exportCSV);
 
 update();
 </script>
-
-<script>
-(function(){
-  const KEY = "inventario_verificacion_v1_14";
-  function saveInventorySession(){
-    try{
-      if(!window.inventory || !inventory.length) return;
-      localStorage.setItem(KEY, JSON.stringify({
-        inventory, verified:[...found.keys()], recent,
-        source: $("source") ? $("source").textContent : "",
-        savedAt: new Date().toISOString()
-      }));
-    }catch(e){}
-  }
-  function restoreInventorySession(){
-    try{
-      const raw = localStorage.getItem(KEY);
-      if(!raw) return;
-      const s = JSON.parse(raw);
-      if(!s.inventory || !s.inventory.length) return;
-      const ok = confirm(
-        "Se encontró un inventario guardado.\n\n" +
-        `${s.verified?.length || 0} de ${s.inventory.length} series estaban verificadas.\n\n` +
-        "¿Deseas continuar con este inventario?"
-      );
-      if(!ok) return;
-      inventory = s.inventory;
-      found.clear();
-      (s.verified || []).forEach(k => {
-        const item = inventory.find(x => norm(x.serial) === k);
-        if(item) found.set(k, item);
-      });
-      recent = Array.isArray(s.recent) ? s.recent : [];
-      if($("source")) $("source").textContent = s.source || `${inventory.length} series cargadas`;
-      if($("ready")) $("ready").textContent = `Sesión recuperada: ${found.size} de ${inventory.length} verificadas.`;
-      if(typeof update === "function") update();
-    }catch(e){}
-  }
-  window.addEventListener("beforeunload", function(e){
-    if(window.inventory && inventory.length && found.size > 0 && found.size < inventory.length){
-      saveInventorySession();
-      e.preventDefault();
-      e.returnValue = "";
-    }
-  });
-  window.__saveInventorySession = saveInventorySession;
-  window.__restoreInventorySession = restoreInventorySession;
-  window.addEventListener("load", function(){ setTimeout(restoreInventorySession, 250); });
-})();
-</script>
-
-<script>
-(function(){
-  const originalUpdate = window.update;
-  if(typeof originalUpdate !== "function") return;
-  window.update = function(){
-    const result = originalUpdate.apply(this, arguments);
-    if(window.__saveInventorySession) window.__saveInventorySession();
-    return result;
-  };
-})();
-</script>
-
 </body>
 </html>
