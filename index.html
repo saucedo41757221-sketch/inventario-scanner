@@ -8,11 +8,15 @@
 
 <!-- ÚNICA dependencia externa: lectura de Excel -->
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js">
+
+
+</script>
+<script>
 document.addEventListener("input", event => {
   if(event.target && event.target.id === "missingSearch") renderMissing();
 });
-
 </script>
+
 
 <style>
 :root{
