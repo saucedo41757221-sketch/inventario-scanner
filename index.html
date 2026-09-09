@@ -749,7 +749,7 @@ update();
   if(!input || !result) return;
 
   input.addEventListener("input", function(){
-    if(!window.inventory || !inventory.length) return;
+    if(!inventory.length) return;
 
     const q = norm(input.value);
     if(!q){
