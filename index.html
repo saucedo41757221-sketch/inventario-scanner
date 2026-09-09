@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#08a6e3">
-<title>Sistema de Verificación de Inventario v1.21 | Home Office by Canella</title>
+<title>Sistema de Verificación de Inventario v1.22 | Home Office by Canella</title>
 
 <!-- ÚNICA dependencia externa: lectura de Excel -->
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js">
@@ -101,7 +101,7 @@ input[type=text]:focus{border-color:var(--ho-blue);box-shadow:0 0 0 3px #08a6e32
   .num{font-size:22px}
 }
 
-#completionOverlay{position:fixed;inset:0;width:100vw;height:100vh;background:#111827aa;backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;padding:20px;z-index:100}
+#completionOverlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:#111827aa;backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;padding:20px;z-index:100}
 #completionCard{width:min(460px,100%);background:#fff;border-radius:24px;padding:30px 24px;text-align:center;box-shadow:0 24px 70px #0005;animation:completionIn .28s ease-out}
 .completionCheck{width:82px;height:82px;margin:0 auto 18px;border-radius:50%;background:#e8f8fd;color:var(--ho-blue);display:grid;place-items:center;font-size:46px;font-weight:900;animation:checkPop .45s ease-out}
 #completionCard h2{margin:0;color:var(--ho-dark);font-size:26px}
@@ -121,7 +121,7 @@ input[type=text]:focus{border-color:var(--ho-blue);box-shadow:0 0 0 3px #08a6e32
   <div class="brand-divider"></div>
   <div class="brand-title">
     <h1>Sistema de Verificación de Inventario</h1>
-    <div class="muted">Control de inventario físico · v1.21</div>
+    <div class="muted">Control de inventario físico · v1.22</div>
   </div>
 </header>
 
@@ -201,7 +201,8 @@ input[type=text]:focus{border-color:var(--ho-blue);box-shadow:0 0 0 3px #08a6e32
   <div id="missingList" class="small">Las series no verificadas aparecerán aquí.</div>
 </div>
 
-</div>
+</div></div>
+
 <div id="completionOverlay" role="dialog" aria-modal="true" aria-labelledby="completionTitle">
   <div id="completionCard">
     <div class="completionCheck">✓</div>
@@ -211,7 +212,6 @@ input[type=text]:focus{border-color:var(--ho-blue);box-shadow:0 0 0 3px #08a6e32
     <button id="closeCompletion">Continuar</button>
   </div>
 <div class="small" style="text-align:center;margin:18px 0 4px;color:#9ca3af">Home Office by Canella · Herramienta interna de inventario</div>
-</div>
 <div id="toast"></div>
 
 <script>
