@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#08a6e3">
-<title>Sistema de Verificación de Inventario v1.19 | Home Office by Canella</title>
+<title>Sistema de Verificación de Inventario v1.20 | Home Office by Canella</title>
 
 <!-- ÚNICA dependencia externa: lectura de Excel -->
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js">
@@ -121,7 +121,7 @@ input[type=text]:focus{border-color:var(--ho-blue);box-shadow:0 0 0 3px #08a6e32
   <div class="brand-divider"></div>
   <div class="brand-title">
     <h1>Sistema de Verificación de Inventario</h1>
-    <div class="muted">Control de inventario físico · v1.19</div>
+    <div class="muted">Control de inventario físico · v1.20</div>
   </div>
 </header>
 
@@ -741,5 +741,70 @@ $("export").addEventListener("click", exportCSV);
 
 update();
 </script>
+
+<script>
+(function(){
+  const input = document.getElementById("manualSerial");
+  const result = document.getElementById("result");
+  if(!input || !result) return;
+
+  input.addEventListener("input", function(){
+    if(!window.inventory || !inventory.length) return;
+
+    const q = norm(input.value);
+    if(!q){
+      result.innerHTML = "";
+      const ready = document.getElementById("ready");
+      if(ready) ready.textContent = "Campo listo. Escribe o escanea la siguiente serie.";
+      return;
+    }
+
+    const matches = inventory.filter(x =>
+      [x.serial, x.item, x.code].some(v => norm(v).includes(q))
+    );
+
+    if(matches.length === 0){
+      result.innerHTML = '<div class="result no"><b>Sin coincidencias</b><div class="small">No hay series, descripciones o SKU que coincidan con la entrada.</div></div>';
+      return;
+    }
+
+    const shown = matches.slice(0, 20);
+    const extra = matches.length > 20
+      ? `<div class="small" style="margin-top:7px">… y ${matches.length-20} más.</div>`
+      : "";
+
+    result.innerHTML = `
+      <div class="result multi">
+        <span class="badge" style="background:#dbeafe;color:#1d4ed8">
+          🔎 ${matches.length} ${matches.length===1 ? "COINCIDENCIA" : "COINCIDENCIAS"}
+        </span>
+        <div style="margin-top:8px">
+          ${shown.map(x => `
+            <div style="padding:7px 0;border-bottom:1px solid #e5e7eb">
+              <b>${escapeHtml(x.serial)}</b>
+              <div class="small">${escapeHtml(x.item || "")}${x.code ? " · " + escapeHtml(x.code) : ""}</div>
+            </div>
+          `).join("")}
+          ${extra}
+        </div>
+        <div class="small" style="margin-top:8px">
+          Presiona «Buscar» o Enter para continuar con la verificación.
+        </div>
+      </div>`;
+  });
+})();
+</script>
+
+
+<script>
+(function(){
+  const search = document.getElementById("missingSearch");
+  if(!search) return;
+  search.addEventListener("input", function(){
+    if(typeof renderMissing === "function") renderMissing();
+  });
+})();
+</script>
+
 </body>
 </html>
